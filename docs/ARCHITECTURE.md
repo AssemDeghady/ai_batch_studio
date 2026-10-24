@@ -1,25 +1,25 @@
-# Batch Studio Architecture
+# AI Batch Studio Architecture
 
-This document provides a deep technical overview of the architecture, design patterns, and subsystems of **Batch Studio**.
+This document provides a deep technical overview of the architecture, design patterns, and subsystems of **AI Batch Studio**.
 
 ---
 
 ## 1. High-Level Design Principles
 
-Batch Studio is built as a **Manifest V3 Chrome Extension** designed to execute repetitive AI image and video generation queues directly inside a user's authenticated web session.
+AI Batch Studio is built as a **Manifest V3 Chrome Extension** designed to execute repetitive AI image and video generation queues directly inside a user's authenticated web session.
 
 ### Core Architectural Principles:
 1. **Zero Credential Exposure**: The extension never intercepts, stores, or transmits user passwords, authentication tokens, or cookies. It relies exclusively on the browser's native cookie jar.
 2. **Local-First Persistence**: All batch definitions, prompt histories, queue state, and reference media files are stored locally on the user's machine using `IndexedDB` and `chrome.storage.local`.
 3. **Decoupled Execution & Observation**: Generation submission, generation observation, and file downloading are separated into distinct lifecycle stages to prevent duplicate generations or loss of assets during network fluctuations.
-4. **Progressive Input Escalation**: When interacting with complex reactive web applications (Slate.js, ProseMirror, Angular, Lit), Batch Studio begins with standard DOM events and progressively escalates to hardware-level Chrome DevTools Protocol (`chrome.debugger`) events only if necessary.
+4. **Progressive Input Escalation**: When interacting with complex reactive web applications (Slate.js, ProseMirror, Angular, Lit), AI Batch Studio begins with standard DOM events and progressively escalates to hardware-level Chrome DevTools Protocol (`chrome.debugger`) events only if necessary.
 5. **Trusted Types & CSP Compliance**: All DOM modifications adhere to modern Content Security Policy requirements (e.g., Google's TrustedHTML policies) without relying on prohibited string-based `innerHTML` assignments.
 
 ---
 
 ## 2. Manifest V3 Service Worker & Lifecycle
 
-In Manifest V3, background pages are replaced by ephemeral **Service Workers** that can be terminated by the browser when idle. Batch Studio maintains reliable long-running queues through several coordinated mechanisms:
+In Manifest V3, background pages are replaced by ephemeral **Service Workers** that can be terminated by the browser when idle. AI Batch Studio maintains reliable long-running queues through several coordinated mechanisms:
 
 ```mermaid
 flowchart TD
@@ -118,7 +118,7 @@ If a task finishes generation on the platform but the browser fails to download 
 
 ## 5. Storage Architecture
 
-Batch Studio employs a tiered local storage strategy:
+AI Batch Studio employs a tiered local storage strategy:
 
 | Storage Engine | Key / Store | Data Stored |
 | :--- | :--- | :--- |
@@ -137,7 +137,7 @@ Reference images are stored as raw `Blob` objects in IndexedDB. When passed to c
 
 Chrome's Manifest V3 security model restricts `chrome.downloads.download` from directly fetching `blob:https://...` URLs from background service workers because blob URLs are strictly scoped to the renderer process of the tab that created them.
 
-Batch Studio overcomes this with a **lossless content script bridge**:
+AI Batch Studio overcomes this with a **lossless content script bridge**:
 1. When an asset is detected as a `blob:` URL (common on ChatGPT), the content script fetches the blob locally within the tab origin.
 2. The blob is read via `FileReader.readAsDataURL` into a Base64 data URI.
 3. The data URI is returned to the background worker, which passes it to `chrome.downloads.download`.

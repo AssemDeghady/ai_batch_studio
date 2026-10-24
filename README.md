@@ -1,4 +1,4 @@
-# Batch Studio
+# AI Batch Studio
 
 [![Manifest V3](https://img.shields.io/badge/Chrome_Extension-Manifest_V3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -7,7 +7,7 @@
 [![Vitest](https://img.shields.io/badge/Tests-Vitest-6E9F18?logo=vitest&logoColor=white)](https://vitest.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-**Batch Studio** is an open-source, client-side Chrome extension (Manifest V3) designed to automate sequential batch prompt execution, reference asset management, and media downloading for **ChatGPT** and **Google Flow**.
+**AI Batch Studio** is an open-source, client-side Chrome extension (Manifest V3) designed to automate sequential batch prompt execution, reference asset management, and media downloading for **ChatGPT** and **Google Flow**.
 
 It operates directly inside your authentic, signed-in browser session. There are no API keys required, no recurring proxy subscription fees, and no fragile headless browser automation.
 
@@ -15,7 +15,7 @@ It operates directly inside your authentic, signed-in browser session. There are
 
 ## Table of Contents
 
-- [Why Batch Studio?](#why-batch-studio)
+- [Why AI Batch Studio?](#why-ai-batch-studio)
 - [Supported Platforms & Capabilities](#supported-platforms--capabilities)
   - [ChatGPT](#chatgpt)
   - [Google Flow](#google-flow)
@@ -40,16 +40,16 @@ It operates directly inside your authentic, signed-in browser session. There are
 
 ---
 
-## Why Batch Studio?
+## Why AI Batch Studio?
 
 Modern generative platforms like **ChatGPT** (DALL-E / GPT-4o image generation) and **Google Flow** (Imagen 3 & Veo video generation) provide web interfaces with features, fine-tuned models, and prompt workflows that are often inaccessible or cost-prohibitive via standard public APIs.
 
 However, generating dozens of scene variations, asset libraries, or sequential storyboards manually requires repetitive copy-pasting, constant tab monitoring, and manual file saving.
 
-Batch Studio solves this by bridging a high-performance React management UI with deep DOM inspection and Chrome extension service workers:
+AI Batch Studio solves this by bridging a high-performance React management UI with deep DOM inspection and Chrome extension service workers:
 
 1. **Zero Credential Sharing**: Uses your existing logged-in browser session cookies. Your credentials never leave your browser.
-2. **Anti-Bot Resilient**: Unlike Selenium or Playwright instances that trigger Cloudflare, reCAPTCHA, or bot protection, Batch Studio executes within your regular browsing profile.
+2. **Anti-Bot Resilient**: Unlike Selenium or Playwright instances that trigger Cloudflare, reCAPTCHA, or bot protection, AI Batch Studio executes within your regular browsing profile.
 3. **Reactive Framework Compatibility**: Handles modern web composer frameworks (Slate.js, Lexical, ProseMirror, React synthetic events, Angular Material, and Trusted Types CSP environments).
 4. **Resilient Download Pipeline**: Separates prompt generation tracking from file downloading so network glitches or download interruptions can be retried without re-generating expensive AI credits.
 
@@ -176,7 +176,7 @@ flowchart TD
 
 ### Progressive Input Escalation & Verification
 
-To ensure reliable prompt submission across diverse browser environments, Batch Studio utilizes a 4-stage progressive escalation system:
+To ensure reliable prompt submission across diverse browser environments, AI Batch Studio utilizes a 4-stage progressive escalation system:
 
 ```mermaid
 flowchart LR
@@ -229,7 +229,7 @@ batch-studio/
 │   ├── icons/                  # Extension icons (16, 32, 48, 128px)
 │   └── manifest.json           # Manifest V3 configuration
 ├── scripts/
-│   ├── package-zip.mjs         # Packages dist/ into batch-studio-extension.zip
+│   ├── package-zip.mjs         # Packages dist/ into ai-batch-studio.zip
 │   ├── postbuild.mjs           # Copies manifest, icons, and assets to dist/
 │   └── reload-ext.cjs          # Hot-reloads extension in Chrome debug sessions
 ├── src/
@@ -296,8 +296,8 @@ batch-studio/
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/your-username/batch-studio.git
-cd batch-studio
+git clone git@github.com:AssemDeghady/ai_batch_studio.git
+cd ai_batch_studio
 
 # 2. Install dependencies
 npm install
@@ -322,7 +322,7 @@ npm run package
 3. Enable **Developer mode** toggle in the top-right corner.
 4. Click **Load unpacked**.
 5. Select the `dist/` directory inside this repository.
-6. The **Batch Studio** icon will appear in your extensions toolbar. Pin it for quick access.
+6. The **AI Batch Studio** icon will appear in your extensions toolbar. Pin it for quick access.
 
 ---
 
@@ -409,7 +409,7 @@ For in-depth technical guides, specifications, and contributor workflows, consul
 - **100% Client-Side**: All prompt drafts, queue records, and downloaded media remain entirely on your local machine. No external servers or telemetry are used.
 - **IndexedDB (`BatchStudioDB`)**: Stores high-volume data (batch records, task history, and base64/binary image reference blobs up to 20 MB each).
 - **`chrome.storage.local`**: Stores lightweight user preferences (default platform, numbering settings, timeout configs).
-- **No Credential Access**: Batch Studio does not read, store, or transmit your passwords, API keys, or session tokens.
+- **No Credential Access**: AI Batch Studio does not read, store, or transmit your passwords, API keys, or session tokens.
 
 ---
 
@@ -422,7 +422,7 @@ For in-depth technical guides, specifications, and contributor workflows, consul
 | `alarms` | Keeps the background service worker active during long generations. |
 | `notifications` | Notifies you when batches finish or require attention. |
 | `tabs` & `scripting` | Connects the extension bridge to open generation tabs. |
-| `sidePanel` | Allows running Batch Studio in Chrome's Side Panel. |
+| `sidePanel` | Allows running AI Batch Studio in Chrome's Side Panel. |
 | `debugger` | Dispatches trusted hardware input events when background tabs require native clicks. |
 | `host_permissions` | Allows content scripts to interact with ChatGPT and Google Flow domains. |
 

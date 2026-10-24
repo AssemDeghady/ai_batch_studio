@@ -1,6 +1,6 @@
-# Contributing to Batch Studio
+# Contributing to AI Batch Studio
 
-Thank you for your interest in contributing to **Batch Studio**! As an open-source project, contributions from developers of all experience levels are welcome.
+Thank you for your interest in contributing to **AI Batch Studio**! As an open-source project, contributions from developers of all experience levels are welcome.
 
 ---
 
@@ -47,7 +47,7 @@ To load the extension into Chrome:
 1. Open Google Chrome and go to `chrome://extensions/`.
 2. Toggle on **Developer mode** in the upper right.
 3. Click **Load unpacked** and select the `dist/` folder in your repository clone.
-4. After making code changes and re-running `npm run build`, click the reload icon on the Batch Studio card in `chrome://extensions/`.
+4. After making code changes and re-running `npm run build`, click the reload icon on the AI Batch Studio card in `chrome://extensions/`.
 
 ---
 

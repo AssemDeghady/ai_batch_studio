@@ -564,7 +564,7 @@ export const App: React.FC = () => {
         <div className="brand-row">
           <div className="brand-logo">B</div>
           <div>
-            <h1 className="brand-title">Batch Studio</h1>
+            <h1 className="brand-title">AI Batch Studio</h1>
             <p className="brand-subtitle">
               AI Image & Video Queue for ChatGPT & Google Flow
             </p>
@@ -593,7 +593,7 @@ export const App: React.FC = () => {
                 window.open(window.location.href, '_blank');
               }
             }}
-            title="Open Batch Studio in a full browser tab"
+            title="Open AI Batch Studio in a full browser tab"
           >
             <ExternalLink size={12} /> Full View
           </button>

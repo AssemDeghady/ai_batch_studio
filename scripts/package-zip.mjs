@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const distDir = path.resolve(rootDir, 'dist');
-const outZip = path.resolve(rootDir, 'batch-studio-extension.zip');
+const outZip = path.resolve(rootDir, 'ai-batch-studio.zip');
 
 function crc32(buf) {
   let crc = 0xffffffff;

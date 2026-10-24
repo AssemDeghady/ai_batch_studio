@@ -1,6 +1,6 @@
 # Batch Import Formats & Template Tokens
 
-This document details the file formats supported for importing prompt batches into **Batch Studio**, as well as the dynamic filename template tokens used for automatic file naming.
+This document details the file formats supported for importing prompt batches into **AI Batch Studio**, as well as the dynamic filename template tokens used for automatic file naming.
 
 ---
 
@@ -25,7 +25,7 @@ An aerial wide view of the ancient oasis surrounded by illuminated palm trees
 
 ## 2. CSV Import (`.csv`)
 
-Batch Studio supports full **RFC 4180** compliant CSV files. Prompts can span multiple lines when wrapped in quotes, and commas inside quoted text are safely escaped.
+AI Batch Studio supports full **RFC 4180** compliant CSV files. Prompts can span multiple lines when wrapped in quotes, and commas inside quoted text are safely escaped.
 
 ### Supported Columns (Case-Insensitive):
 
@@ -43,7 +43,7 @@ Batch Studio supports full **RFC 4180** compliant CSV files. Prompts can span mu
 | `disable_prefix` | Boolean| If `true`, disables the global prefix for this task. | `true`, `false` |
 
 ### Headerless Fallback Mode:
-If the CSV does not contain a recognizable header row, Batch Studio uses positional column mapping:
+If the CSV does not contain a recognizable header row, AI Batch Studio uses positional column mapping:
 - Column 1: `prompt`
 - Column 2: `name`
 - Column 3: `references`
@@ -72,7 +72,7 @@ The **Global Prompt Prefix** allows you to enforce consistent style directives, 
 
 ## 4. Filename Template Tokens
 
-Batch Studio automatically formats the filenames of downloaded images and videos using dynamic template tokens.
+AI Batch Studio automatically formats the filenames of downloaded images and videos using dynamic template tokens.
 
 ### Available Tokens:
 

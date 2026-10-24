@@ -1,12 +1,12 @@
-# Batch Studio — Agent Guidelines & Repository Rules
+# AI Batch Studio — Agent Guidelines & Repository Rules
 
-This document defines core architectural invariants, critical rules, and operating protocols for AI coding agents working on the **Batch Studio** codebase.
+This document defines core architectural invariants, critical rules, and operating protocols for AI coding agents working on the **AI Batch Studio** codebase.
 
 ---
 
 ## 1. Project Overview & Tech Stack
 
-**Batch Studio** is an open-source, client-side Manifest V3 Chrome extension for sequential batch prompt execution, reference asset management, and media downloading on **ChatGPT** and **Google Flow**.
+**AI Batch Studio** is an open-source, client-side Manifest V3 Chrome extension for sequential batch prompt execution, reference asset management, and media downloading on **ChatGPT** and **Google Flow**.
 
 - **Language / Runtime**: TypeScript 5.6 (Strict Mode enabled), Node.js 20+
 - **Frontend UI**: React 18.3, Lucide React icons, Vanilla CSS custom properties design system

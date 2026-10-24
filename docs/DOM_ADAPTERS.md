@@ -1,6 +1,6 @@
 # Platform DOM Adapters Guide
 
-This guide details the internal workings of the DOM Adapters in **Batch Studio** and explains how to create new adapters for additional generative AI platforms.
+This guide details the internal workings of the DOM Adapters in **AI Batch Studio** and explains how to create new adapters for additional generative AI platforms.
 
 ---
 

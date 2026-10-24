@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Batch Studio",
+  "name": "AI Batch Studio",
   "version": "1.0.0",
-  "description": "Batch AI image and video generation studio for ChatGPT and Google Flow with reference management and automatic downloads.",
+  "description": "AI Batch Studio — Batch AI image and video generation studio for ChatGPT and Google Flow with reference management and automatic downloads.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -10,7 +10,7 @@
     "128": "icons/icon-128.png"
   },
   "action": {
-    "default_title": "Batch Studio",
+    "default_title": "AI Batch Studio",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
