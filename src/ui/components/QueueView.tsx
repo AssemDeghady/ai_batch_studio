@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   Clock,
   Download,
@@ -12,6 +14,7 @@ import {
   SkipForward,
   Square,
   Terminal,
+  X,
   XCircle
 } from 'lucide-react';
 import {
@@ -74,6 +77,60 @@ function formatDuration(task: TaskRecord, now: number): string {
   return `${min}m ${rem}s`;
 }
 
+export function calculateBatchEta(tasks: TaskRecord[], now: number): string {
+  const completedTasks = tasks.filter(
+    (t) => t.status === 'completed' && t.submittedAt && t.completedAt && t.completedAt > t.submittedAt
+  );
+
+  const remainingPending = tasks.filter((t) => t.status === 'pending' || t.status === 'queued').length;
+  const runningTasks = tasks.filter(
+    (t) =>
+      t.status === 'preparing' ||
+      t.status === 'submitting' ||
+      t.status === 'generating' ||
+      t.status === 'downloading'
+  );
+
+  if (remainingPending === 0 && runningTasks.length === 0) {
+    return '0s';
+  }
+
+  if (completedTasks.length === 0) {
+    return runningTasks.length > 0 ? 'Calculating...' : '—';
+  }
+
+  const recentCompleted = completedTasks.slice(-10);
+  const totalDurationMs = recentCompleted.reduce(
+    (acc, t) => acc + ((t.completedAt || now) - (t.submittedAt || now)),
+    0
+  );
+  const avgDurationMs = Math.round(totalDurationMs / recentCompleted.length);
+
+  let runningRemainingMs = 0;
+  for (const rt of runningTasks) {
+    if (rt.submittedAt) {
+      const elapsed = Math.max(0, now - rt.submittedAt);
+      runningRemainingMs += Math.max(0, avgDurationMs - elapsed);
+    } else {
+      runningRemainingMs += avgDurationMs;
+    }
+  }
+
+  const totalEtaMs = remainingPending * avgDurationMs + runningRemainingMs;
+  const sec = Math.round(totalEtaMs / 1000);
+
+  if (sec <= 0) return '< 10s';
+  if (sec < 60) return `~${sec}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  if (min >= 60) {
+    const hr = Math.floor(min / 60);
+    const remMin = min % 60;
+    return `~${hr}h ${remMin}m`;
+  }
+  return `~${min}m ${remSec}s`;
+}
+
 export const QueueView: React.FC<QueueViewProps> = ({
   batch,
   tasks,
@@ -100,6 +157,12 @@ export const QueueView: React.FC<QueueViewProps> = ({
   const [editPromptValue, setEditPromptValue] = useState('');
   const [tabDiagnostics, setTabDiagnostics] = useState<PlatformTabDiagnostics | null>(null);
   const [loadingTabDiag, setLoadingTabDiag] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<
+    'all' | 'running' | 'pending' | 'completed' | 'failed'
+  >('all');
+  const [currentPage, setCurrentPage] = useState(0);
+  const [lightboxOutput, setLightboxOutput] = useState<OutputRecord | null>(null);
+  const pageSize = 40;
 
   const refreshTabDiagnostics = async () => {
     setLoadingTabDiag(true);
@@ -139,6 +202,38 @@ export const QueueView: React.FC<QueueViewProps> = ({
 
   const progressPct =
     totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+  const filteredTasks = tasks.filter((t) => {
+    if (filterStatus === 'all') return true;
+    if (filterStatus === 'running') {
+      return (
+        t.status === 'preparing' ||
+        t.status === 'submitting' ||
+        t.status === 'generating' ||
+        t.status === 'downloading'
+      );
+    }
+    if (filterStatus === 'pending') {
+      return t.status === 'pending' || t.status === 'paused';
+    }
+    if (filterStatus === 'completed') {
+      return t.status === 'completed';
+    }
+    if (filterStatus === 'failed') {
+      return (
+        t.status === 'failed' ||
+        t.status === 'download_failed' ||
+        t.status === 'needs_attention'
+      );
+    }
+    return true;
+  });
+
+  const totalFilteredPages = Math.ceil(filteredTasks.length / pageSize);
+  const displayedTasks =
+    filteredTasks.length > pageSize
+      ? filteredTasks.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
+      : filteredTasks;
 
   const currentTask =
     tasks.find((t) => t.id === batch.activeTaskId) ||
@@ -230,12 +325,21 @@ export const QueueView: React.FC<QueueViewProps> = ({
             style={{
               display: 'flex',
               justifyContent: 'space-between',
+              alignItems: 'center',
               fontSize: '11.5px',
               color: 'var(--text-secondary)'
             }}
           >
             <span>
               Overall Progress ({completedCount} of {totalCount} completed)
+              {batch.status === 'running' && (
+                <span
+                  style={{ marginLeft: '8px', color: 'var(--status-info)', fontWeight: 600 }}
+                  data-testid="queue-eta"
+                >
+                  • ETA: {calculateBatchEta(tasks, now)}
+                </span>
+              )}
             </span>
             <span style={{ fontWeight: 700 }}>{progressPct}%</span>
           </div>
@@ -246,6 +350,24 @@ export const QueueView: React.FC<QueueViewProps> = ({
             />
           </div>
         </div>
+
+        {/* Circuit Breaker Tripped Alert */}
+        {batch.status === 'paused' &&
+          (batch.consecutiveFailureCount || 0) >= (batch.circuitBreakerLimit ?? 3) && (
+            <div
+              className="alert-banner alert-warning"
+              style={{ marginTop: '10px' }}
+              data-testid="circuit-breaker-banner"
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <AlertTriangle size={14} />
+                <strong>Circuit Breaker Tripped ({batch.consecutiveFailureCount} consecutive failures)</strong>
+              </div>
+              <span style={{ fontSize: '11.5px' }}>
+                Queue was automatically paused to prevent credit burning. Inspect the website tab, resolve any issue, and click Resume Queue.
+              </span>
+            </div>
+          )}
 
         {/* Counters Grid */}
         <div className="grid-4" style={{ marginTop: '10px' }}>
@@ -451,9 +573,70 @@ export const QueueView: React.FC<QueueViewProps> = ({
         )}
       </div>
 
+      {/* Filter Tabs & Pagination */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px'
+        }}
+        data-testid="queue-filters-bar"
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+          {(
+            [
+              { id: 'all', label: `All (${totalCount})` },
+              { id: 'running', label: `Running (${runningCount})` },
+              { id: 'pending', label: `Pending (${pendingCount})` },
+              { id: 'completed', label: `Completed (${completedCount})` },
+              { id: 'failed', label: `Failed (${failedCount})` }
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`btn btn-sm ${filterStatus === tab.id ? 'btn-primary' : ''}`}
+              onClick={() => {
+                setFilterStatus(tab.id);
+                setCurrentPage(0);
+              }}
+              data-testid={`filter-${tab.id}`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {totalFilteredPages > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px' }}>
+            <span>
+              Page {currentPage + 1} of {totalFilteredPages} ({filteredTasks.length} tasks)
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={currentPage === 0}
+              onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={currentPage >= totalFilteredPages - 1}
+              onClick={() => setCurrentPage((p) => Math.min(totalFilteredPages - 1, p + 1))}
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Task Cards List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {tasks.map((task) => {
+        {displayedTasks.map((task) => {
           const taskOutputs = outputsByTask[task.id] || [];
           const combinedRefIds = Array.from(
             new Set([...batch.referenceIds, ...task.referenceIds])
@@ -611,6 +794,100 @@ export const QueueView: React.FC<QueueViewProps> = ({
                     {resolvedRefs.length} reference
                     {resolvedRefs.length === 1 ? '' : 's'}
                   </span>
+                </div>
+              )}
+
+              {/* Output Thumbnails Preview */}
+              {taskOutputs.length > 0 && (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: '6px',
+                    margin: '6px 0'
+                  }}
+                  data-testid={`task-outputs-${task.sequenceNumber}`}
+                >
+                  {taskOutputs.map((out) => {
+                    const preview = out.previewUrl || out.sourceUrl;
+                    const isImg = out.type === 'image';
+                    return (
+                      <div
+                        key={out.id}
+                        style={{
+                          position: 'relative',
+                          cursor: preview ? 'pointer' : 'default',
+                          borderRadius: '6px',
+                          overflow: 'hidden',
+                          border: '1px solid var(--border-subtle)',
+                          background: 'var(--bg-elevated)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: preview && isImg ? '0' : '4px 8px'
+                        }}
+                        onClick={() => {
+                          if (preview) {
+                            setLightboxOutput(out);
+                          }
+                        }}
+                        title={preview ? `Click to enlarge ${out.filename}` : out.filename}
+                        data-testid={`output-thumb-${out.index}`}
+                      >
+                        {preview && isImg ? (
+                          <img
+                            src={preview}
+                            alt={out.filename}
+                            style={{
+                              width: '44px',
+                              height: '44px',
+                              objectFit: 'cover',
+                              display: 'block'
+                            }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              fontSize: '11px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Download size={11} />
+                            <span
+                              style={{
+                                maxWidth: '110px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {out.filename}
+                            </span>
+                          </div>
+                        )}
+                        {out.status === 'completed' && (
+                          <span
+                            style={{
+                              position: preview && isImg ? 'absolute' : 'static',
+                              bottom: '2px',
+                              right: '2px',
+                              background: 'rgba(0, 0, 0, 0.75)',
+                              color: 'var(--status-success)',
+                              borderRadius: '3px',
+                              padding: '1px 3px',
+                              fontSize: '9px',
+                              fontWeight: 700
+                            }}
+                          >
+                            ✓
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -914,6 +1191,114 @@ export const QueueView: React.FC<QueueViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Lightbox Modal */}
+      {lightboxOutput && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            zIndex: 10000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setLightboxOutput(null)}
+          data-testid="lightbox-modal"
+        >
+          <div
+            style={{
+              maxWidth: '92vw',
+              maxHeight: '92vh',
+              backgroundColor: 'var(--bg-elevated)',
+              borderRadius: '8px',
+              padding: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              border: '1px solid var(--border-subtle)',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <strong
+                style={{
+                  fontSize: '12.5px',
+                  color: 'var(--text-primary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {lightboxOutput.filename}
+              </strong>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setLightboxOutput(null)}
+                aria-label="Close modal"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                maxHeight: '70vh',
+                overflow: 'hidden',
+                backgroundColor: '#000',
+                borderRadius: '4px'
+              }}
+            >
+              {lightboxOutput.type === 'video' ? (
+                <video
+                  src={lightboxOutput.previewUrl || lightboxOutput.sourceUrl}
+                  controls
+                  autoPlay
+                  style={{ maxWidth: '100%', maxHeight: '68vh' }}
+                />
+              ) : (
+                <img
+                  src={lightboxOutput.previewUrl || lightboxOutput.sourceUrl}
+                  alt={lightboxOutput.filename}
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: '68vh',
+                    objectFit: 'contain'
+                  }}
+                />
+              )}
+            </div>
+
+            <div
+              style={{
+                fontSize: '11.5px',
+                color: 'var(--text-secondary)',
+                maxHeight: '60px',
+                overflowY: 'auto'
+              }}
+            >
+              <strong>Prompt:</strong> {lightboxOutput.originalPrompt}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

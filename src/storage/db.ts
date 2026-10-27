@@ -146,6 +146,11 @@ export async function deleteBatchCascade(batchId: string): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+  try {
+    await cleanupOrphanReferences();
+  } catch {
+    // Non-fatal if GC encounters transient error
+  }
 }
 
 // Tasks
@@ -266,6 +271,79 @@ export async function deleteReference(id: string): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+/**
+ * Scans all batches and tasks to determine active reference IDs.
+ * Any reference metadata or blob in IndexedDB that is no longer referenced by
+ * any batch or task is safely purged to reclaim storage quota.
+ */
+export async function cleanupOrphanReferences(): Promise<{
+  purgedReferencesCount: number;
+  purgedBlobsCount: number;
+}> {
+  const db = await openDatabase();
+  const batches = await getAllBatches();
+
+  // Collect all active reference IDs across all batches and their tasks
+  const activeRefIds = new Set<string>();
+  for (const b of batches) {
+    for (const id of b.referenceIds || []) {
+      activeRefIds.add(id);
+    }
+    const tasks = await getTasksByBatch(b.id);
+    for (const t of tasks) {
+      for (const id of t.referenceIds || []) {
+        activeRefIds.add(id);
+      }
+    }
+  }
+
+  // Get all references currently stored
+  const allRefs = await getAllReferences();
+  const orphanRefs = allRefs.filter((r) => !activeRefIds.has(r.id));
+  const orphanRefIds = new Set(orphanRefs.map((r) => r.id));
+  const orphanStorageKeys = new Set(orphanRefs.map((r) => r.storageKey).filter(Boolean));
+
+  // Also collect surviving storage keys
+  const survivingStorageKeys = new Set(
+    allRefs.filter((r) => !orphanRefIds.has(r.id)).map((r) => r.storageKey).filter(Boolean)
+  );
+
+  let purgedBlobsCount = 0;
+  let purgedReferencesCount = 0;
+
+  const tx = db.transaction(['references', 'referenceBlobs'], 'readwrite');
+  const refStore = tx.objectStore('references');
+  const blobStore = tx.objectStore('referenceBlobs');
+
+  for (const ref of orphanRefs) {
+    refStore.delete(ref.id);
+    purgedReferencesCount++;
+  }
+
+  for (const key of orphanStorageKeys) {
+    blobStore.delete(key);
+    purgedBlobsCount++;
+  }
+
+  // Also purge any unattached blobs whose keys are not in survivingStorageKeys
+  const allBlobKeysReq = blobStore.getAllKeys();
+  const allBlobKeys = await wrapRequest<IDBValidKey[]>(allBlobKeysReq);
+  for (const key of allBlobKeys) {
+    const strKey = String(key);
+    if (!survivingStorageKeys.has(strKey) && !orphanStorageKeys.has(strKey)) {
+      blobStore.delete(strKey);
+      purgedBlobsCount++;
+    }
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  return { purgedReferencesCount, purgedBlobsCount };
 }
 
 // Diagnostic Logs

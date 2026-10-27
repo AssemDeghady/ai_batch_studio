@@ -125,8 +125,34 @@ export function sanitizeSubfolderPath(subfolder: string): string {
   return parts.join('/');
 }
 
-export function formatRelativeDownloadPath(subfolder: string, filename: string): string {
-  const cleanSubfolder = sanitizeSubfolderPath(subfolder);
+export interface SubfolderInterpolationContext {
+  projectName?: string;
+  timestamp?: Date;
+}
+
+export function interpolateSubfolderPath(
+  subfolder: string,
+  context?: SubfolderInterpolationContext
+): string {
+  if (!subfolder) return '';
+  const dateStr = formatDateToken(context?.timestamp || new Date());
+  const timeStr = formatTimeToken(context?.timestamp || new Date());
+  const safeProject = sanitizeFilenameSegment(context?.projectName || 'Batch', 36) || 'Batch';
+
+  const interpolated = subfolder
+    .replace(/\{project\}/g, safeProject)
+    .replace(/\{date\}/g, dateStr)
+    .replace(/\{time\}/g, timeStr);
+
+  return sanitizeSubfolderPath(interpolated);
+}
+
+export function formatRelativeDownloadPath(
+  subfolder: string,
+  filename: string,
+  context?: SubfolderInterpolationContext
+): string {
+  const cleanSubfolder = interpolateSubfolderPath(subfolder, context);
   return cleanSubfolder ? `${cleanSubfolder}/${filename}` : filename;
 }
 

@@ -1,5 +1,6 @@
 import {
   buildOutputFilename,
+  formatRelativeDownloadPath,
   sanitizeSubfolderPath
 } from '../core/fileNaming';
 import {
@@ -138,11 +139,6 @@ export function consumePendingDirectDownload(
     return matched;
   }
   return null;
-}
-
-export function formatRelativeDownloadPath(subfolder: string, filename: string): string {
-  const cleanSubfolder = sanitizeSubfolderPath(subfolder);
-  return cleanSubfolder ? `${cleanSubfolder}/${filename}` : filename;
 }
 
 function hasChromeDownloadsApi(): boolean {
@@ -306,6 +302,7 @@ export async function processTaskOutputsDownload(params: {
         status: 'requested',
         filename,
         sourceUrl: asset.url,
+        previewUrl: asset.url,
         retryCount: 0,
         createdAt: now
       };
@@ -314,6 +311,7 @@ export async function processTaskOutputsDownload(params: {
         ...outputRecord,
         status: 'requested',
         sourceUrl: asset.url || outputRecord.sourceUrl,
+        previewUrl: asset.url || outputRecord.previewUrl,
         error: undefined
       };
     }
@@ -362,7 +360,8 @@ export async function executeSingleOutputDownload(params: {
   const { batch, task, output, asset, adapter } = params;
   const relativePath = formatRelativeDownloadPath(
     batch.downloadSettings.subfolder,
-    output.filename
+    output.filename,
+    { projectName: batch.name }
   );
 
   // 1. Check if user explicitly configured a File System Access API handle and if it is still valid
@@ -474,6 +473,7 @@ export async function executeSingleOutputDownload(params: {
             downloadMethod: 'chrome_downloads',
             status: dlRes.status,
             completedAt: dlRes.status === 'completed' ? Date.now() : undefined,
+            previewUrl: adapterDl.resolvedUrl || output.previewUrl || output.sourceUrl,
             error: dlRes.error
           };
           await saveOutput(nextOut);
@@ -511,6 +511,7 @@ export async function executeSingleOutputDownload(params: {
               downloadMethod: 'chrome_downloads',
               status: dlRes.status,
               completedAt: dlRes.status === 'completed' ? Date.now() : undefined,
+              previewUrl: directUrl || output.previewUrl || output.sourceUrl,
               error: dlRes.error
             };
             await saveOutput(nextOut);

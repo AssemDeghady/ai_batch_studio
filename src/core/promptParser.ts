@@ -28,11 +28,85 @@ export interface PromptParseResult {
 }
 
 /**
+ * Expands prompt permutations using matrix syntax `{opt1, opt2, opt3}` or `{opt1; opt2; opt3}`.
+ * Supports multiple bracket groups in a single prompt and computes their Cartesian product.
+ * Example:
+ * "A {red, blue} sports car on a {beach, city street}"
+ * =>
+ * [
+ *   "A red sports car on a beach",
+ *   "A red sports car on a city street",
+ *   "A blue sports car on a beach",
+ *   "A blue sports car on a city street"
+ * ]
+ */
+export function expandPromptVariations(prompt: string): string[] {
+  const trimmed = prompt.trim();
+  if (!trimmed) return [];
+
+  const regex = /\{([^{}]+)\}/g;
+  const matches: Array<{ fullMatch: string; options: string[] }> = [];
+  let m: RegExpExecArray | null;
+
+  while ((m = regex.exec(trimmed)) !== null) {
+    const rawContent = m[1];
+    const options = rawContent
+      .split(/[,;]/)
+      .map((opt) => opt.trim())
+      .filter((opt) => opt.length > 0);
+
+    if (options.length > 0) {
+      matches.push({ fullMatch: m[0], options });
+    }
+  }
+
+  if (matches.length === 0) {
+    return [trimmed];
+  }
+
+  let results: string[] = [trimmed];
+
+  for (const match of matches) {
+    const nextResults: string[] = [];
+    for (const currentPrompt of results) {
+      for (const opt of match.options) {
+        nextResults.push(currentPrompt.replace(match.fullMatch, opt));
+      }
+    }
+    results = nextResults;
+  }
+
+  return results;
+}
+
+/**
+ * Takes multi-line prompt text and expands any lines containing `{...}` matrix variations,
+ * returning the normalized expanded multi-line string.
+ */
+export function expandAllPromptLines(text: string): string {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  const expandedLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const variations = expandPromptVariations(trimmed);
+    expandedLines.push(...variations);
+  }
+
+  return expandedLines.join('\n');
+}
+
+/**
  * Parses multi-line plain text (or TXT file contents) using the convention of
  * one prompt per non-empty line. Blank or whitespace-only lines are skipped and
  * reported in `skippedBlankLines`.
  */
-export function parsePlainTextPrompts(text: string): PromptParseResult {
+export function parsePlainTextPrompts(
+  text: string,
+  options?: { expandVariations?: boolean }
+): PromptParseResult {
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = normalized.split('\n');
   const items: ParsedPromptDraft[] = [];
@@ -44,12 +118,18 @@ export function parsePlainTextPrompts(text: string): PromptParseResult {
       skippedBlankLines++;
       continue;
     }
-    items.push({
-      index: items.length + 1,
-      prompt: trimmed,
-      referenceNames: [],
-      generationSettings: {}
-    });
+    const promptsToPush = options?.expandVariations
+      ? expandPromptVariations(trimmed)
+      : [trimmed];
+
+    for (const p of promptsToPush) {
+      items.push({
+        index: items.length + 1,
+        prompt: p,
+        referenceNames: [],
+        generationSettings: {}
+      });
+    }
   }
 
   return {

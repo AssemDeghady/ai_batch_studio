@@ -28,7 +28,14 @@ import {
 } from '../src/core/referenceManager';
 import { formatDateToken } from '../src/core/fileNaming';
 import { retryTaskDownloadsOnly } from '../src/downloads/downloadManager';
-import { getBatch, getOutputsByBatch, getTasksByBatch } from '../src/storage/db';
+import {
+  cleanupOrphanReferences,
+  deleteBatchCascade,
+  getAllReferences,
+  getBatch,
+  getOutputsByBatch,
+  getTasksByBatch
+} from '../src/storage/db';
 import { DEFAULT_DOWNLOAD_SETTINGS, TaskRecord } from '../src/types/models';
 import { mockChromeState } from './setup';
 
@@ -428,5 +435,93 @@ describe('End-to-End Batch & Queue Integration Tests', () => {
     expect(recoveredUncertain.tasks[0].lastError?.code).toBe(
       'DUPLICATE_SUBMISSION_RISK'
     );
+  });
+
+  it('circuit breaker automatically pauses batch queue after consecutive task failures', async () => {
+    const parsed = parsePlainTextPrompts('Task 1\nTask 2\nTask 3');
+    const { batch } = await createBatchWithTasks({
+      name: 'CircuitBreakerBatch',
+      platform: 'chatgpt',
+      taskType: 'image',
+      prompts: parsed.items,
+      circuitBreakerLimit: 2
+    });
+
+    const adapter = new SimulatedPlatformAdapter();
+    // Task 1 will fail submission
+    adapter.failSubmissionForTaskIds.add('task_' + batch.id + '_1');
+    // Task 2 will be actively generating
+    adapter.nextStatusByTask.set('task_' + batch.id + '_2', {
+      state: 'active',
+      detectedAssets: []
+    });
+
+    // Run queue step 1 -> Task 1 fails, engine advances to Task 2 which enters generating
+    const step1 = await stepBatchQueue(batch.id, adapter);
+    expect(step1.batch.status).toBe('running');
+    expect(step1.batch.consecutiveFailureCount).toBe(1);
+
+    // Now Task 2 finishes with failure (state: 'mark_failed')
+    adapter.nextStatusByTask.set('task_' + batch.id + '_2', {
+      state: 'failed',
+      detectedAssets: [],
+      userMessage: 'Generation failed on platform'
+    });
+
+    // Run queue step 2 -> Task 2 fails -> consecutiveFailureCount reaches 2 (limit: 2) -> circuit breaker pauses queue!
+    const step2 = await stepBatchQueue(batch.id, adapter);
+    expect(step2.batch.status).toBe('paused');
+    expect(step2.batch.consecutiveFailureCount).toBe(2);
+
+    // Further stepBatchQueue calls should not start Task 3 while paused
+    const step3 = await stepBatchQueue(batch.id, adapter);
+    expect(step3.batch.status).toBe('paused');
+    const remainingTasks = await getTasksByBatch(batch.id);
+    expect(remainingTasks[2].status).toBe('pending');
+
+    // Resuming resets failure counter
+    const resumed = await resumeBatchQueue(batch.id, adapter);
+    expect(resumed.batch.consecutiveFailureCount).toBe(0);
+  });
+
+  it('cleans up orphaned reference records and blobs via cleanupOrphanReferences', async () => {
+    // Add reference 1 and reference 2
+    const ref1 = await addReferenceImage({
+      name: 'ref1.png',
+      mimeType: 'image/png',
+      size: 100,
+      type: 'character',
+      dataUrl: SAMPLE_PNG_DATA_URL
+    });
+
+    const ref2 = await addReferenceImage({
+      name: 'ref2.png',
+      mimeType: 'image/png',
+      size: 100,
+      type: 'art_style',
+      dataUrl: SAMPLE_PNG_DATA_URL
+    });
+
+    const parsed = parsePlainTextPrompts('Prompt with ref 1');
+    const { batch } = await createBatchWithTasks({
+      name: 'RefBatch',
+      platform: 'chatgpt',
+      taskType: 'image',
+      prompts: parsed.items,
+      sharedReferenceIds: [ref1.id] // Only ref1 is linked! ref2 is orphaned immediately
+    });
+
+    // Run garbage collection
+    const gc1 = await cleanupOrphanReferences();
+    expect(gc1.purgedReferencesCount).toBe(1); // ref2 was purged
+
+    const remainingRefs = await getAllReferences();
+    expect(remainingRefs.map((r) => r.id)).toContain(ref1.id);
+    expect(remainingRefs.map((r) => r.id)).not.toContain(ref2.id);
+
+    // Now delete the batch cascadingly -> ref1 also becomes orphaned and purged
+    await deleteBatchCascade(batch.id);
+    const finalRefs = await getAllReferences();
+    expect(finalRefs).toHaveLength(0);
   });
 });

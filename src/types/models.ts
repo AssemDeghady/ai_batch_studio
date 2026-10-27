@@ -293,6 +293,8 @@ export interface OutputRecord {
   status: OutputStatus;
   filename: string;
   sourceUrl?: string;
+  previewUrl?: string;
+  thumbnailDataUrl?: string;
   downloadMethod?: 'chrome_downloads' | 'native_button' | 'filesystem_api';
   downloadId?: number;
   retryCount: number;
@@ -343,6 +345,9 @@ export interface BatchRecord {
   activeTaskId?: string;
   targetTabId?: number;
   nextOutputSequenceNumber: number;
+  circuitBreakerLimit?: number;
+  consecutiveFailureCount?: number;
+  maxConcurrency?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -358,6 +363,9 @@ export interface PreferencesRecord {
   defaultGenerationSettings: GenerationSettings;
   theme: 'light' | 'dark' | 'system';
   notificationsEnabled: boolean;
+  soundEnabled: boolean;
+  circuitBreakerLimit: number;
+  maxConcurrency: number;
   globalOutputCounter: number;
 }
 
@@ -416,5 +424,8 @@ export const DEFAULT_PREFERENCES: PreferencesRecord = {
   defaultGenerationSettings: DEFAULT_GENERATION_SETTINGS,
   theme: 'dark',
   notificationsEnabled: true,
+  soundEnabled: true,
+  circuitBreakerLimit: 3,
+  maxConcurrency: 1,
   globalOutputCounter: 1
 };

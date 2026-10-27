@@ -2,12 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOutputFilename,
   formatRelativeDownloadPath,
+  interpolateSubfolderPath,
   sanitizeFilenameSegment,
   sanitizeSubfolderPath,
   validateFilenameTemplate
 } from '../src/core/fileNaming';
 import { composeFinalPrompt } from '../src/core/prefixComposer';
-import { parseCsvPrompts, parsePlainTextPrompts } from '../src/core/promptParser';
+import {
+  expandAllPromptLines,
+  expandPromptVariations,
+  parseCsvPrompts,
+  parsePlainTextPrompts
+} from '../src/core/promptParser';
+import { calculateBatchEta } from '../src/ui/components/QueueView';
 import {
   assertValidTaskTransition,
   canTransitionTaskStatus,
@@ -380,5 +387,168 @@ describe('Queue State Machine & Timeout Policy', () => {
       now: submittedAt + 200000
     });
     expect(at200sUnknown.decision).toBe('needs_attention');
+  });
+});
+
+describe('Prompt Matrix Permutation & Variations Expansion', () => {
+  it('expands single and multiple permutation brackets into Cartesian products', () => {
+    const prompt = 'A {red, blue} sports car on a {beach, city street}';
+    const variations = expandPromptVariations(prompt);
+
+    expect(variations).toEqual([
+      'A red sports car on a beach',
+      'A red sports car on a city street',
+      'A blue sports car on a beach',
+      'A blue sports car on a city street'
+    ]);
+  });
+
+  it('supports semicolon delimiters and trims whitespace around options', () => {
+    const prompt = 'A cute { cat ; dog ; bird }';
+    const variations = expandPromptVariations(prompt);
+
+    expect(variations).toEqual(['A cute cat', 'A cute dog', 'A cute bird']);
+  });
+
+  it('returns untouched prompt when no permutation brackets are present', () => {
+    const prompt = 'A peaceful mountain landscape';
+    expect(expandPromptVariations(prompt)).toEqual(['A peaceful mountain landscape']);
+  });
+
+  it('expands multiline prompt batches via expandAllPromptLines', () => {
+    const text = 'Photo of {sun, moon}\nA simple forest\n{Fast, Slow} running river';
+    const expanded = expandAllPromptLines(text);
+
+    expect(expanded.split('\n')).toEqual([
+      'Photo of sun',
+      'Photo of moon',
+      'A simple forest',
+      'Fast running river',
+      'Slow running river'
+    ]);
+  });
+});
+
+describe('Dynamic Subfolder Path Token Interpolation', () => {
+  it('interpolates {project}, {date}, and {time} tokens into sanitized relative subfolder paths', () => {
+    const fixedDate = new Date(2026, 9, 27, 14, 30, 15);
+    const interpolated = interpolateSubfolderPath('BatchStudio/{project}/{date}', {
+      projectName: 'Desert Oasis',
+      timestamp: fixedDate
+    });
+
+    expect(interpolated).toBe('BatchStudio/Desert_Oasis/2026-10-27');
+  });
+
+  it('safely rejects path traversal sequences in subfolder templates', () => {
+    const fixedDate = new Date(2026, 9, 27, 14, 30, 15);
+    const interpolated = interpolateSubfolderPath('../../secret/{project}', {
+      projectName: 'Test',
+      timestamp: fixedDate
+    });
+
+    expect(interpolated).toBe('secret/Test');
+  });
+
+  it('formats relative download path with interpolated subfolder tokens', () => {
+    const fixedDate = new Date(2026, 9, 27, 14, 30, 15);
+    const relative = formatRelativeDownloadPath(
+      'Outputs/{project}',
+      '001_output.png',
+      { projectName: 'Hero Render', timestamp: fixedDate }
+    );
+
+    expect(relative).toBe('Outputs/Hero_Render/001_output.png');
+  });
+});
+
+describe('Batch ETA Estimation & Rolling Average', () => {
+  it('calculates ETA based on completed task durations and pending count', () => {
+    const now = 100000;
+    const tasks: TaskRecord[] = [
+      {
+        id: 't1',
+        batchId: 'b1',
+        sequenceNumber: 1,
+        originalPrompt: 'P1',
+        finalPromptSnapshot: 'P1',
+        platform: 'chatgpt',
+        taskType: 'image',
+        status: 'completed',
+        friendlyStatus: 'Completed',
+        referenceIds: [],
+        generationSettings: {},
+        createdAt: 10000,
+        updatedAt: 40000,
+        submittedAt: 10000,
+        completedAt: 40000, // 30s duration
+        retryCount: 0,
+        outputIds: []
+      },
+      {
+        id: 't2',
+        batchId: 'b1',
+        sequenceNumber: 2,
+        originalPrompt: 'P2',
+        finalPromptSnapshot: 'P2',
+        platform: 'chatgpt',
+        taskType: 'image',
+        status: 'pending',
+        friendlyStatus: 'Pending',
+        referenceIds: [],
+        generationSettings: {},
+        createdAt: 10000,
+        updatedAt: 10000,
+        retryCount: 0,
+        outputIds: []
+      },
+      {
+        id: 't3',
+        batchId: 'b1',
+        sequenceNumber: 3,
+        originalPrompt: 'P3',
+        finalPromptSnapshot: 'P3',
+        platform: 'chatgpt',
+        taskType: 'image',
+        status: 'pending',
+        friendlyStatus: 'Pending',
+        referenceIds: [],
+        generationSettings: {},
+        createdAt: 10000,
+        updatedAt: 10000,
+        retryCount: 0,
+        outputIds: []
+      }
+    ];
+
+    // Avg duration = 30s. 2 pending tasks => 60s => ~1m 0s
+    const eta = calculateBatchEta(tasks, now);
+    expect(eta).toBe('~1m 0s');
+  });
+
+  it('returns 0s when all tasks have reached completion', () => {
+    const tasks: TaskRecord[] = [
+      {
+        id: 't1',
+        batchId: 'b1',
+        sequenceNumber: 1,
+        originalPrompt: 'P1',
+        finalPromptSnapshot: 'P1',
+        platform: 'chatgpt',
+        taskType: 'image',
+        status: 'completed',
+        friendlyStatus: 'Completed',
+        referenceIds: [],
+        generationSettings: {},
+        createdAt: 10000,
+        updatedAt: 40000,
+        submittedAt: 10000,
+        completedAt: 40000,
+        retryCount: 0,
+        outputIds: []
+      }
+    ];
+
+    expect(calculateBatchEta(tasks, 50000)).toBe('0s');
   });
 });

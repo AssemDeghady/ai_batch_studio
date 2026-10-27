@@ -417,13 +417,22 @@ export async function runScheduledQueueTick(batchId?: string): Promise<void> {
 
   if (beforeBatch.status === 'running' && afterBatch.status === 'completed') {
     await notifyUser(
-      'Batch Completed — Batch Studio',
+      'Batch Completed — AI Batch Studio',
       `Batch "${afterBatch.name}" has finished processing all tasks.`
     );
   } else if (beforeBatch.status === 'running' && afterBatch.status === 'needs_attention') {
     await notifyUser(
-      'Action Needed — Batch Studio',
+      'Action Needed — AI Batch Studio',
       `Batch "${afterBatch.name}" needs your attention on the platform tab.`
+    );
+  } else if (
+    beforeBatch.status === 'running' &&
+    afterBatch.status === 'paused' &&
+    (afterBatch.consecutiveFailureCount || 0) >= (afterBatch.circuitBreakerLimit ?? 3)
+  ) {
+    await notifyUser(
+      'Circuit Breaker Tripped — AI Batch Studio',
+      `Batch "${afterBatch.name}" paused automatically after ${afterBatch.consecutiveFailureCount} consecutive task failures to protect credits.`
     );
   }
 

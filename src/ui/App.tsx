@@ -4,6 +4,7 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  Download,
   ExternalLink,
   FileSpreadsheet,
   FolderOpen,
@@ -26,11 +27,13 @@ import {
 } from '../core/fileNaming';
 import { composeFinalPrompt } from '../core/prefixComposer';
 import {
+  expandAllPromptLines,
   ParsedPromptDraft,
   parseCsvPrompts,
   parsePlainTextPrompts,
   PromptParseValidationError
 } from '../core/promptParser';
+import { playAttentionChime, playCompletionChime } from './soundEffects';
 import {
   createBatchWithTasks,
   reorderBatchTasks,
@@ -130,6 +133,9 @@ export const App: React.FC = () => {
   const [timeoutSettings, setTimeoutSettings] = useState<TimeoutSettings>(
     DEFAULT_TIMEOUT_SETTINGS
   );
+  const [circuitBreakerLimit, setCircuitBreakerLimit] = useState(3);
+  const [maxConcurrency, setMaxConcurrency] = useState(1);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Queue & Saved Batches State
   const [recentBatches, setRecentBatches] = useState<BatchRecord[]>([]);
@@ -140,7 +146,9 @@ export const App: React.FC = () => {
   const [bannerError, setBannerError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const jsonFileInputRef = useRef<HTMLInputElement | null>(null);
   const refUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const prevBatchStatusRef = useRef<string | undefined>(undefined);
 
   // Load initial preferences, references, and batches
   const refreshData = async () => {
@@ -191,6 +199,9 @@ export const App: React.FC = () => {
       setPrefixSeparator(prefs.prefixSeparator || '\n\n');
       setDownloadSettings(prefs.downloadPreferences);
       setTimeoutSettings(prefs.timeoutSettings);
+      setCircuitBreakerLimit(prefs.circuitBreakerLimit ?? 3);
+      setMaxConcurrency(prefs.maxConcurrency ?? 1);
+      setSoundEnabled(prefs.soundEnabled ?? true);
       setGenerationSettings(prefs.defaultGenerationSettings);
     });
   }, []);
@@ -218,6 +229,139 @@ export const App: React.FC = () => {
       }
     };
   }, [activeBatch?.id]);
+
+  // Audio chime effect on batch completion or attention needed
+  useEffect(() => {
+    if (activeBatch) {
+      if (
+        prevBatchStatusRef.current === 'running' &&
+        activeBatch.status === 'completed'
+      ) {
+        if (soundEnabled) playCompletionChime();
+      } else if (
+        prevBatchStatusRef.current === 'running' &&
+        (activeBatch.status === 'needs_attention' ||
+          (activeBatch.status === 'paused' &&
+            (activeBatch.consecutiveFailureCount || 0) >=
+              (activeBatch.circuitBreakerLimit ?? 3)))
+      ) {
+        if (soundEnabled) playAttentionChime();
+      }
+      prevBatchStatusRef.current = activeBatch.status;
+    } else {
+      prevBatchStatusRef.current = undefined;
+    }
+  }, [activeBatch?.status, activeBatch?.consecutiveFailureCount, soundEnabled]);
+
+  const handleExportBatchJson = () => {
+    const exportBatch = activeBatch || {
+      name: batchName,
+      platform,
+      taskType,
+      globalPrefix,
+      prefixEnabled,
+      prefixSeparator,
+      defaultGenerationSettings: generationSettings,
+      downloadSettings,
+      timeoutSettings,
+      circuitBreakerLimit,
+      maxConcurrency
+    };
+
+    const promptsToExport =
+      activeTasks.length > 0
+        ? activeTasks.map((t) => ({
+            sequenceNumber: t.sequenceNumber,
+            prompt: t.originalPrompt,
+            name: t.name,
+            generationSettings: t.generationSettings
+          }))
+        : promptDrafts.map((d) => ({
+            sequenceNumber: d.index,
+            prompt: d.prompt,
+            name: d.name,
+            generationSettings: d.generationSettings
+          }));
+
+    const exportPayload = {
+      version: 1,
+      app: 'AI Batch Studio',
+      exportedAt: new Date().toISOString(),
+      batch: exportBatch,
+      prompts: promptsToExport
+    };
+
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+      type: 'application/json'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeName = (exportBatch.name || 'batch').replace(/[^a-zA-Z0-9_-]/g, '_');
+    a.download = `${safeName}_backup.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportBatchJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      if (!data.batch && !data.prompts) {
+        throw new Error('Invalid Batch Studio JSON backup file format.');
+      }
+
+      if (data.batch) {
+        if (data.batch.name) setBatchName(data.batch.name);
+        if (data.batch.platform) setPlatform(data.batch.platform);
+        if (data.batch.taskType) setTaskType(data.batch.taskType);
+        if (data.batch.globalPrefix !== undefined) setGlobalPrefix(data.batch.globalPrefix);
+        if (data.batch.prefixEnabled !== undefined) setPrefixEnabled(data.batch.prefixEnabled);
+        if (data.batch.prefixSeparator) setPrefixSeparator(data.batch.prefixSeparator);
+        if (data.batch.defaultGenerationSettings || data.batch.generationSettings) {
+          setGenerationSettings(data.batch.defaultGenerationSettings || data.batch.generationSettings);
+        }
+        if (data.batch.downloadSettings) setDownloadSettings(data.batch.downloadSettings);
+        if (data.batch.timeoutSettings) setTimeoutSettings(data.batch.timeoutSettings);
+        if (data.batch.circuitBreakerLimit) setCircuitBreakerLimit(data.batch.circuitBreakerLimit);
+        if (data.batch.maxConcurrency) setMaxConcurrency(data.batch.maxConcurrency);
+      }
+
+      if (Array.isArray(data.prompts)) {
+        const drafts: ParsedPromptDraft[] = data.prompts
+          .map((p: any, idx: number) => ({
+            index: idx + 1,
+            prompt: typeof p === 'string' ? p : p.prompt || '',
+            name: typeof p === 'object' ? p.name : undefined,
+            referenceNames: [],
+            generationSettings:
+              typeof p === 'object' && p.generationSettings
+                ? p.generationSettings
+                : {}
+          }))
+          .filter((d: ParsedPromptDraft) => d.prompt.trim().length > 0);
+
+        setPromptDrafts(drafts);
+        setImportFeedback({
+          message: `Successfully imported batch "${data.batch?.name || file.name}" with ${drafts.length} prompt(s).`,
+          errors: []
+        });
+      }
+
+      setActiveTab('studio');
+    } catch (err: any) {
+      setImportFeedback({
+        message: err.message || 'Failed to parse JSON file.',
+        errors: [{ row: 1, message: err.message || 'JSON parse error' }]
+      });
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
 
   const toggleTheme = async () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -476,6 +620,9 @@ export const App: React.FC = () => {
       prefixSeparator,
       downloadPreferences: downloadSettings,
       timeoutSettings,
+      circuitBreakerLimit,
+      maxConcurrency,
+      soundEnabled,
       defaultGenerationSettings: generationSettings
     });
 
@@ -491,7 +638,9 @@ export const App: React.FC = () => {
       taskReferenceIdsMap: taskRefsMap,
       defaultGenerationSettings: generationSettings,
       downloadSettings,
-      timeoutSettings
+      timeoutSettings,
+      circuitBreakerLimit,
+      maxConcurrency
     });
 
     setActiveBatch(batch);
@@ -539,7 +688,8 @@ export const App: React.FC = () => {
 
   const sampleDestinationPath = formatRelativeDownloadPath(
     downloadSettings.subfolder,
-    sampleFilename
+    sampleFilename,
+    { projectName: batchName }
   );
 
   // Determine available models and capabilities for Google Flow
@@ -887,7 +1037,7 @@ export const App: React.FC = () => {
               </div>
 
               {/* Import & Paste Controls */}
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -896,6 +1046,14 @@ export const App: React.FC = () => {
                   onChange={handleFileImport}
                   data-testid="file-import-input"
                 />
+                <input
+                  ref={jsonFileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  style={{ display: 'none' }}
+                  onChange={handleImportBatchJson}
+                  data-testid="json-import-input"
+                />
                 <button
                   type="button"
                   className="btn"
@@ -903,6 +1061,22 @@ export const App: React.FC = () => {
                   data-testid="import-prompts-btn"
                 >
                   <FileSpreadsheet size={14} /> Import TXT / CSV
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => jsonFileInputRef.current?.click()}
+                  data-testid="import-json-btn"
+                >
+                  <Upload size={14} /> Import Batch (.json)
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleExportBatchJson}
+                  data-testid="export-json-btn"
+                >
+                  <Download size={14} /> Export Batch (.json)
                 </button>
                 <button
                   type="button"
@@ -932,7 +1106,7 @@ export const App: React.FC = () => {
                   <textarea
                     className="textarea"
                     placeholder={
-                      'Paste one prompt per line:\nA lone nomad crossing golden sand dunes at sunset\nClose-up portrait of the nomad looking toward a starry oasis'
+                      'Paste one prompt per line (supports permutations like {red, blue} sports car on {beach, street}):\nA lone nomad crossing golden sand dunes at sunset\nClose-up portrait of the nomad looking toward a starry oasis'
                     }
                     value={rawPasteText}
                     onChange={(e) => setRawPasteText(e.target.value)}
@@ -942,19 +1116,42 @@ export const App: React.FC = () => {
                   <div
                     style={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       justifyContent: 'space-between',
                       alignItems: 'center',
+                      gap: '8px',
                       marginTop: '4px'
                     }}
                   >
-                    <span
-                      style={{
-                        fontSize: '11px',
-                        color: 'var(--text-secondary)'
-                      }}
-                    >
-                      Blank lines are automatically skipped.
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          color: 'var(--text-secondary)'
+                        }}
+                      >
+                        Blank lines are automatically skipped.
+                      </span>
+                      {rawPasteText.includes('{') && (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => {
+                            const expanded = expandAllPromptLines(rawPasteText);
+                            setRawPasteText(expanded);
+                            const count = expanded.split('\n').filter((l) => l.trim()).length;
+                            setImportFeedback({
+                              message: `Expanded variations into ${count} prompts.`,
+                              errors: []
+                            });
+                          }}
+                          data-testid="expand-variations-btn"
+                          title="Expand {option1, option2} permutations into separate prompt lines"
+                        >
+                          <Sparkles size={12} /> Expand Variations
+                        </button>
+                      )}
+                    </div>
                     <button
                       type="button"
                       className="btn btn-primary btn-sm"
@@ -1727,6 +1924,72 @@ export const App: React.FC = () => {
                         }
                       />
                     </div>
+                  </div>
+
+                  <div className="grid-2">
+                    <div className="field-group">
+                      <label
+                        className="field-label"
+                        htmlFor="circuit-breaker-limit-input"
+                      >
+                        Circuit Breaker Limit (Failures Before Pause)
+                      </label>
+                      <input
+                        id="circuit-breaker-limit-input"
+                        type="number"
+                        min={1}
+                        max={10}
+                        className="input"
+                        value={circuitBreakerLimit}
+                        onChange={(e) =>
+                          setCircuitBreakerLimit(Math.max(1, Math.min(10, Number(e.target.value))))
+                        }
+                        data-testid="circuit-breaker-input"
+                      />
+                    </div>
+
+                    <div className="field-group">
+                      <label
+                        className="field-label"
+                        htmlFor="max-concurrency-select"
+                      >
+                        Queue Concurrency
+                      </label>
+                      <select
+                        id="max-concurrency-select"
+                        className="select"
+                        value={maxConcurrency}
+                        onChange={(e) => setMaxConcurrency(Number(e.target.value))}
+                        data-testid="concurrency-select"
+                      >
+                        <option value={1}>Sequential (1 task at a time)</option>
+                        <option value={2}>Concurrent (up to 2 tasks)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '4px 0'
+                    }}
+                  >
+                    <input
+                      id="sound-enabled-checkbox"
+                      type="checkbox"
+                      checked={soundEnabled}
+                      onChange={(e) => setSoundEnabled(e.target.checked)}
+                      data-testid="sound-enabled-checkbox"
+                    />
+                    <label
+                      htmlFor="sound-enabled-checkbox"
+                      className="field-label"
+                      style={{ marginBottom: 0, cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      Play synthesized audio chime on batch completion or attention needed
+                    </label>
                   </div>
 
                   <div

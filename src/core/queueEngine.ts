@@ -58,6 +58,8 @@ export interface CreateBatchInput {
   downloadSettings?: DownloadSettings;
   timeoutSettings?: TimeoutSettings;
   targetTabId?: number;
+  circuitBreakerLimit?: number;
+  maxConcurrency?: number;
 }
 
 /**
@@ -234,6 +236,9 @@ export async function createBatchWithTasks(
     timeoutSettings,
     targetTabId: input.targetTabId,
     nextOutputSequenceNumber: startNum,
+    circuitBreakerLimit: input.circuitBreakerLimit ?? prefs.circuitBreakerLimit ?? 3,
+    consecutiveFailureCount: 0,
+    maxConcurrency: input.maxConcurrency ?? prefs.maxConcurrency ?? 1,
     createdAt: now,
     updatedAt: now
   };
@@ -398,6 +403,7 @@ export async function startBatchQueue(
   const updatedBatch: BatchRecord = {
     ...batch,
     status: 'running',
+    consecutiveFailureCount: 0,
     updatedAt: Date.now()
   };
   await saveBatch(updatedBatch);
@@ -505,6 +511,7 @@ export async function resumeBatchQueue(
   const runningBatch: BatchRecord = {
     ...batch,
     status: 'running',
+    consecutiveFailureCount: 0,
     updatedAt: now
   };
   await saveBatch(runningBatch);
@@ -789,10 +796,55 @@ export async function recoverQueueAfterRestart(
   };
 }
 
+async function recordTaskSuccess(batch: BatchRecord): Promise<BatchRecord> {
+  if (batch.consecutiveFailureCount && batch.consecutiveFailureCount > 0) {
+    batch = {
+      ...batch,
+      consecutiveFailureCount: 0,
+      updatedAt: Date.now()
+    };
+    await saveBatch(batch);
+  }
+  return batch;
+}
+
+async function recordTaskFailure(
+  batch: BatchRecord,
+  now: number
+): Promise<{ batch: BatchRecord; tripped: boolean }> {
+  const nextCount = (batch.consecutiveFailureCount || 0) + 1;
+  const limit = batch.circuitBreakerLimit ?? 3;
+  if (nextCount >= limit) {
+    batch = {
+      ...batch,
+      consecutiveFailureCount: nextCount,
+      status: 'paused',
+      updatedAt: now
+    };
+    await saveBatch(batch);
+    await appendDiagnosticLog({
+      level: 'warn',
+      scope: 'queue',
+      batchId: batch.id,
+      message: `Circuit breaker tripped: ${nextCount} consecutive tasks failed. Queue paused automatically to protect credits.`
+    });
+    return { batch, tripped: true };
+  } else {
+    batch = {
+      ...batch,
+      consecutiveFailureCount: nextCount,
+      updatedAt: now
+    };
+    await saveBatch(batch);
+    return { batch, tripped: false };
+  }
+}
+
 /**
- * Core sequential queue execution step.
- * - Executes at most one task at a time.
- * - Does not start the next pending task until the current task reaches a terminal state (`completed`, `failed`, `download_failed`, `skipped`).
+ * Core sequential / concurrent queue execution step.
+ * - Supports configurable concurrency (`maxConcurrency`: 1 or 2).
+ * - Allows multiple tasks to generate concurrently while serializing composer input.
+ * - Enforces circuit breaker pausing if consecutive failures reach `circuitBreakerLimit`.
  * - Stops immediately if a task enters `needs_attention` or if the platform requires login/verification.
  */
 export async function stepBatchQueue(
@@ -808,134 +860,150 @@ export async function stepBatchQueue(
     return { batch, tasks: await getTasksByBatch(batchId) };
   }
 
-  const tasks = await getTasksByBatch(batchId);
+  let tasks = await getTasksByBatch(batchId);
 
-  // 1. Check if there is currently an active task (`preparing`, `submitting`, `generating`, `downloading`)
-  const activeTask = tasks.find((t) => isActiveTaskStatus(t.status));
-  if (activeTask) {
-    if (activeTask.status === 'generating') {
-      const inspection: AdapterStatusInspection = await adapter.getTaskStatus(activeTask);
-      const evalResult = evaluateGenerationObservation({
-        task: activeTask,
-        settings: batch.timeoutSettings,
-        observableState: inspection.state,
-        now,
-        errorMessage: inspection.userMessage
-      });
+  // 1. Process active tasks that are currently generating
+  const generatingTasks = tasks.filter((t) => t.status === 'generating');
+  for (const activeTask of generatingTasks) {
+    const inspection: AdapterStatusInspection = await adapter.getTaskStatus(activeTask);
+    const evalResult = evaluateGenerationObservation({
+      task: activeTask,
+      settings: batch.timeoutSettings,
+      observableState: inspection.state,
+      now,
+      errorMessage: inspection.userMessage
+    });
 
-      if (evalResult.decision === 'wait_initial_window') {
-        const updatedTask: TaskRecord = {
-          ...activeTask,
-          friendlyStatus: evalResult.friendlyStatus,
-          updatedAt: now
-        };
-        await saveTask(updatedTask);
-        return { batch, tasks: await getTasksByBatch(batchId) };
-      }
+    if (evalResult.decision === 'wait_initial_window' || evalResult.decision === 'continue_generating') {
+      const updatedTask: TaskRecord = {
+        ...activeTask,
+        friendlyStatus: evalResult.friendlyStatus,
+        updatedAt: now
+      };
+      await saveTask(updatedTask);
+      continue;
+    }
 
-      if (evalResult.decision === 'continue_generating') {
-        const updatedTask: TaskRecord = {
-          ...activeTask,
-          friendlyStatus: evalResult.friendlyStatus,
-          updatedAt: now
-        };
-        await saveTask(updatedTask);
-        return { batch, tasks: await getTasksByBatch(batchId) };
-      }
+    if (evalResult.decision === 'proceed_to_download') {
+      const assets =
+        inspection.detectedAssets.length > 0
+          ? inspection.detectedAssets
+          : await adapter.getResults(activeTask);
 
-      if (evalResult.decision === 'proceed_to_download') {
-        const assets =
-          inspection.detectedAssets.length > 0
-            ? inspection.detectedAssets
-            : await adapter.getResults(activeTask);
-
-        if (assets.length === 0) {
-          const noResultTask = transitionTaskRecord(activeTask, 'failed', {
-            friendlyStatus: 'Failed task ready to retry.',
-            now
-          });
-          noResultTask.lastError = {
-            code: 'RESULT_NOT_IDENTIFIED',
-            userMessage: 'Generation finished, but the output asset could not be identified on the page.',
-            recommendedAction: 'Inspect the website tab or retry the task.',
-            retryableGeneration: true,
-            retryableDownload: true,
-            occurredAt: now
-          };
-          await saveTask(noResultTask);
-        } else {
-          const detectedTask = transitionTaskRecord(activeTask, 'result_detected', {
-            friendlyStatus: `Detected ${assets.length} generated output(s).`,
-            now
-          });
-          await saveTask(detectedTask);
-
-          await processTaskOutputsDownload({
-            batch,
-            task: detectedTask,
-            assets,
-            adapter
-          });
-        }
-        // Now that this task reached a terminal state (`completed` or `download_failed`),
-        // continue to check if the next pending task should run or if batch is complete.
-        return stepBatchQueue(batchId, adapter, randomFn, Date.now());
-      }
-
-      if (evalResult.decision === 'auto_retry') {
-        await prepareTaskForRetry(activeTask.id, now);
-        return stepBatchQueue(batchId, adapter, randomFn, Date.now());
-      }
-
-      if (evalResult.decision === 'needs_attention') {
-        const attnTask = transitionTaskRecord(activeTask, 'needs_attention', {
-          friendlyStatus: evalResult.friendlyStatus,
+      if (assets.length === 0) {
+        const noResultTask = transitionTaskRecord(activeTask, 'failed', {
+          friendlyStatus: 'Failed task ready to retry.',
           now
         });
-        attnTask.lastError = {
-          code: inspection.errorCode || 'GENERATION_TIMEOUT',
-          userMessage:
-            evalResult.reason ||
-            'Generation took longer than expected and its status is uncertain.',
-          recommendedAction:
-            'Inspect the website tab. If generation completed, download it; if it stopped, click Retry.',
+        noResultTask.lastError = {
+          code: 'RESULT_NOT_IDENTIFIED',
+          userMessage: 'Generation finished, but the output asset could not be identified on the page.',
+          recommendedAction: 'Inspect the website tab or retry the task.',
           retryableGeneration: true,
           retryableDownload: true,
-          diagnostics: inspection.diagnostics,
           occurredAt: now
         };
-        await saveTask(attnTask);
-        batch = {
-          ...batch,
-          status: 'needs_attention',
-          activeTaskId: attnTask.id,
-          updatedAt: now
-        };
-        await saveBatch(batch);
-        return { batch, tasks: await getTasksByBatch(batchId) };
-      }
+        await saveTask(noResultTask);
+        const failRes = await recordTaskFailure(batch, now);
+        if (failRes.tripped) {
+          return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
+        }
+        batch = failRes.batch;
+      } else {
+        const detectedTask = transitionTaskRecord(activeTask, 'result_detected', {
+          friendlyStatus: `Detected ${assets.length} generated output(s).`,
+          now
+        });
+        await saveTask(detectedTask);
 
-      // evalResult.decision === 'mark_failed'
-      const failedTask = transitionTaskRecord(activeTask, 'failed', {
-        friendlyStatus: 'Failed task ready to retry.',
-        now
-      });
-      failedTask.lastError = {
-        code: inspection.errorCode || 'GENERATION_FAILED',
-        userMessage: evalResult.reason || inspection.userMessage || 'Generation failed.',
-        recommendedAction:
-          inspection.recommendedAction || 'Review the prompt or platform status and click Retry.',
-        retryableGeneration: true,
-        retryableDownload: false,
-        diagnostics: inspection.diagnostics,
-        occurredAt: now
-      };
-      await saveTask(failedTask);
-      // Proceed to next pending task in queue
+        await processTaskOutputsDownload({
+          batch,
+          task: detectedTask,
+          assets,
+          adapter
+        });
+
+        const postTask = await getTask(detectedTask.id);
+        if (postTask?.status === 'completed') {
+          batch = await recordTaskSuccess(batch);
+        } else if (postTask?.status === 'download_failed' || postTask?.status === 'failed') {
+          const failRes = await recordTaskFailure(batch, now);
+          if (failRes.tripped) {
+            return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
+          }
+          batch = failRes.batch;
+        }
+      }
       return stepBatchQueue(batchId, adapter, randomFn, Date.now());
     }
 
-    // If activeTask is in `preparing`, `submitting`, or `downloading`, wait for current operation
+    if (evalResult.decision === 'auto_retry') {
+      await prepareTaskForRetry(activeTask.id, now);
+      return stepBatchQueue(batchId, adapter, randomFn, Date.now());
+    }
+
+    if (evalResult.decision === 'needs_attention') {
+      const attnTask = transitionTaskRecord(activeTask, 'needs_attention', {
+        friendlyStatus: evalResult.friendlyStatus,
+        now
+      });
+      attnTask.lastError = {
+        code: inspection.errorCode || 'GENERATION_TIMEOUT',
+        userMessage:
+          evalResult.reason ||
+          'Generation took longer than expected and its status is uncertain.',
+        recommendedAction:
+          'Inspect the website tab. If generation completed, download it; if it stopped, click Retry.',
+        retryableGeneration: true,
+        retryableDownload: true,
+        diagnostics: inspection.diagnostics,
+        occurredAt: now
+      };
+      await saveTask(attnTask);
+      batch = {
+        ...batch,
+        status: 'needs_attention',
+        activeTaskId: attnTask.id,
+        updatedAt: now
+      };
+      await saveBatch(batch);
+      return { batch, tasks: await getTasksByBatch(batchId) };
+    }
+
+    // evalResult.decision === 'mark_failed'
+    const failedTask = transitionTaskRecord(activeTask, 'failed', {
+      friendlyStatus: 'Failed task ready to retry.',
+      now
+    });
+    failedTask.lastError = {
+      code: inspection.errorCode || 'GENERATION_FAILED',
+      userMessage: evalResult.reason || inspection.userMessage || 'Generation failed.',
+      recommendedAction:
+        inspection.recommendedAction || 'Review the prompt or platform status and click Retry.',
+      retryableGeneration: true,
+      retryableDownload: false,
+      diagnostics: inspection.diagnostics,
+      occurredAt: now
+    };
+    await saveTask(failedTask);
+    const failRes = await recordTaskFailure(batch, now);
+    if (failRes.tripped) {
+      return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
+    }
+    batch = failRes.batch;
+    return stepBatchQueue(batchId, adapter, randomFn, Date.now());
+  }
+
+  // Re-fetch current tasks after inspecting generating tasks
+  tasks = await getTasksByBatch(batchId);
+  const currentActiveTasks = tasks.filter((t) => isActiveTaskStatus(t.status));
+
+  // Check if active tasks reached concurrency limit or if composer is busy
+  const maxConcurrency = Math.max(1, batch.maxConcurrency || 1);
+  const isComposerBusy = currentActiveTasks.some(
+    (t) => t.status === 'preparing' || t.status === 'submitting' || t.status === 'downloading'
+  );
+  if (currentActiveTasks.length >= maxConcurrency || isComposerBusy) {
     return { batch, tasks };
   }
 
@@ -955,20 +1023,22 @@ export async function stepBatchQueue(
   // 3. Find the next `pending` task in sequence order
   const nextPending = tasks.find((t) => t.status === 'pending');
   if (!nextPending) {
-    // All tasks have reached terminal states!
-    batch = {
-      ...batch,
-      status: 'completed',
-      activeTaskId: undefined,
-      updatedAt: now
-    };
-    await saveBatch(batch);
-    await appendDiagnosticLog({
-      level: 'info',
-      scope: 'queue',
-      batchId: batch.id,
-      message: 'Batch completed.'
-    });
+    if (currentActiveTasks.length === 0) {
+      // All tasks have reached terminal states!
+      batch = {
+        ...batch,
+        status: 'completed',
+        activeTaskId: undefined,
+        updatedAt: now
+      };
+      await saveBatch(batch);
+      await appendDiagnosticLog({
+        level: 'info',
+        scope: 'queue',
+        batchId: batch.id,
+        message: 'Batch completed.'
+      });
+    }
     return { batch, tasks };
   }
 
@@ -1020,6 +1090,11 @@ export async function stepBatchQueue(
         occurredAt: now
       };
       await saveTask(unsupportedTask);
+      const failRes = await recordTaskFailure(batch, now);
+      if (failRes.tripped) {
+        return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
+      }
+      batch = failRes.batch;
       return stepBatchQueue(batchId, adapter, randomFn, Date.now());
     }
   }
@@ -1050,6 +1125,11 @@ export async function stepBatchQueue(
       occurredAt: now
     };
     await saveTask(failedRefTask);
+    const failRes = await recordTaskFailure(batch, now);
+    if (failRes.tripped) {
+      return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
+    }
+    batch = failRes.batch;
     return stepBatchQueue(batchId, adapter, randomFn, Date.now());
   }
 
@@ -1117,6 +1197,11 @@ export async function stepBatchQueue(
       occurredAt: now
     };
     await saveTask(failedTask);
+    const failRes = await recordTaskFailure(batch, now);
+    if (failRes.tripped) {
+      return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
+    }
+    batch = failRes.batch;
     return stepBatchQueue(batchId, adapter, randomFn, Date.now());
   }
 
@@ -1148,6 +1233,11 @@ export async function stepBatchQueue(
         occurredAt: now
       };
       await saveTask(failedAttachTask);
+      const failRes = await recordTaskFailure(batch, now);
+      if (failRes.tripped) {
+        return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
+      }
+      batch = failRes.batch;
       return stepBatchQueue(batchId, adapter, randomFn, Date.now());
     }
   }
@@ -1197,6 +1287,11 @@ export async function stepBatchQueue(
       await saveBatch(batch);
       return { batch, tasks: await getTasksByBatch(batchId) };
     }
+    const failRes = await recordTaskFailure(batch, now);
+    if (failRes.tripped) {
+      return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
+    }
+    batch = failRes.batch;
     return stepBatchQueue(batchId, adapter, randomFn, Date.now());
   }
 
