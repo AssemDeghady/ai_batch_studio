@@ -164,6 +164,17 @@ export const QueueView: React.FC<QueueViewProps> = ({
   const [lightboxOutput, setLightboxOutput] = useState<OutputRecord | null>(null);
   const pageSize = 40;
 
+  React.useEffect(() => {
+    if (!lightboxOutput) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setLightboxOutput(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lightboxOutput]);
+
   const refreshTabDiagnostics = async () => {
     setLoadingTabDiag(true);
     try {

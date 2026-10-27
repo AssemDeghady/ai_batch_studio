@@ -225,4 +225,64 @@ describe('Background Service Worker & React UI Integration', () => {
     container.remove();
     setCustomAdapterFactoryForTest(null);
   });
+
+  it('expands matrix variations in the prompt input and opens lightbox on completed output thumbnail', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = ReactDOM.createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+      await flushAsync();
+    });
+
+    // 1. Enter prompt with matrix syntax: "A {red, blue} sports car"
+    const pasteArea = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="paste-prompts-textarea"]'
+    )!;
+    expect(pasteArea).not.toBeNull();
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+      setter?.call(pasteArea, 'A {red, blue} sports car');
+      pasteArea.dispatchEvent(new Event('input', { bubbles: true }));
+      pasteArea.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushAsync();
+    });
+
+    // Expand variations button should be visible
+    const expandBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="expand-variations-btn"]'
+    )!;
+    expect(expandBtn).not.toBeNull();
+
+    await act(async () => {
+      expandBtn.click();
+      await flushAsync();
+    });
+
+    // Check that textarea updated to both variations
+    expect(pasteArea.value).toBe('A red sports car\nA blue sports car');
+
+    // Add to batch
+    const addBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="add-pasted-prompts-btn"]'
+    )!;
+    await act(async () => {
+      addBtn.click();
+      await flushAsync();
+    });
+
+    expect(
+      container.querySelector('[data-testid="prompt-count-badge"]')?.textContent
+    ).toContain('2 prompts queued');
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });
