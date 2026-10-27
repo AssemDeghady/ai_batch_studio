@@ -733,7 +733,7 @@ export const App: React.FC = () => {
           </button>
           <button
             type="button"
-            className="btn btn-sm"
+            className="btn btn-icon"
             onClick={() => {
               if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
                 chrome.tabs.create({
@@ -744,8 +744,9 @@ export const App: React.FC = () => {
               }
             }}
             title="Open AI Batch Studio in a full browser tab"
+            aria-label="Open full browser tab"
           >
-            <ExternalLink size={12} /> Full View
+            <ExternalLink size={14} />
           </button>
         </div>
       </header>
