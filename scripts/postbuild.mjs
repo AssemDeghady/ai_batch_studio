@@ -116,6 +116,7 @@ async function runPostBuild() {
   console.log('Building background service worker...');
   await build({
     configFile: false,
+    publicDir: false,
     build: {
       outDir: resolve(distDir, 'background'),
       emptyOutDir: false,
@@ -136,6 +137,7 @@ async function runPostBuild() {
   console.log('Building content script...');
   await build({
     configFile: false,
+    publicDir: false,
     build: {
       outDir: resolve(distDir, 'content'),
       emptyOutDir: false,
@@ -161,9 +163,24 @@ async function runPostBuild() {
   fs.mkdirSync(distIconsDir, { recursive: true });
 
   for (const size of iconSizes) {
-    const png = createPngBuffer(size);
-    fs.writeFileSync(resolve(publicIconsDir, `icon-${size}.png`), png);
-    fs.writeFileSync(resolve(distIconsDir, `icon-${size}.png`), png);
+    const publicIconPath = resolve(publicIconsDir, `icon-${size}.png`);
+    const distIconPath = resolve(distIconsDir, `icon-${size}.png`);
+    if (fs.existsSync(publicIconPath)) {
+      fs.copyFileSync(publicIconPath, distIconPath);
+    } else {
+      const png = createPngBuffer(size);
+      fs.writeFileSync(publicIconPath, png);
+      fs.writeFileSync(distIconPath, png);
+    }
+  }
+
+  // Copy any additional icon sizes from public/icons to dist/icons
+  if (fs.existsSync(publicIconsDir)) {
+    for (const file of fs.readdirSync(publicIconsDir)) {
+      if (file.endsWith('.png')) {
+        fs.copyFileSync(resolve(publicIconsDir, file), resolve(distIconsDir, file));
+      }
+    }
   }
 
   // Copy manifest.json to dist/manifest.json

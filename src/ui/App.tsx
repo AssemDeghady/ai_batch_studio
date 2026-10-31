@@ -712,7 +712,11 @@ export const App: React.FC = () => {
       {/* Studio Header */}
       <header className="studio-header">
         <div className="brand-row">
-          <div className="brand-logo">B</div>
+          <img
+            src="icons/icon-48.png"
+            alt="AI Batch Studio"
+            className="brand-logo-img"
+          />
           <div>
             <h1 className="brand-title">AI Batch Studio</h1>
             <p className="brand-subtitle">

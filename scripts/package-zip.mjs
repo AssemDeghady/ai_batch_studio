@@ -98,6 +98,12 @@ function createZip(files) {
   return Buffer.concat([...localHeaders, centralBuffer, eocd]);
 }
 
+let retries = 5;
+while (!fs.existsSync(distDir) && retries > 0) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  retries--;
+}
+
 const files = collectFiles(distDir);
 const zipBuffer = createZip(files);
 fs.writeFileSync(outZip, zipBuffer);
