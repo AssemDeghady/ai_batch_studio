@@ -149,6 +149,32 @@ export const App: React.FC = () => {
   const jsonFileInputRef = useRef<HTMLInputElement | null>(null);
   const refUploadInputRef = useRef<HTMLInputElement | null>(null);
   const prevBatchStatusRef = useRef<string | undefined>(undefined);
+  const feedbackTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const setFeedbackWithAutoDismiss = (
+    fb: { message: string; errors: PromptParseValidationError[] } | null,
+    autoDismissMs = 6000
+  ) => {
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+    setImportFeedback(fb);
+    if (fb && fb.errors.length === 0 && autoDismissMs > 0) {
+      feedbackTimerRef.current = setTimeout(() => {
+        setImportFeedback(null);
+        feedbackTimerRef.current = null;
+      }, autoDismissMs);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimerRef.current) {
+        clearTimeout(feedbackTimerRef.current);
+      }
+    };
+  }, []);
 
   // Load initial preferences, references, and batches
   const refreshData = async () => {
@@ -346,7 +372,7 @@ export const App: React.FC = () => {
           .filter((d: ParsedPromptDraft) => d.prompt.trim().length > 0);
 
         setPromptDrafts(drafts);
-        setImportFeedback({
+        setFeedbackWithAutoDismiss({
           message: `Successfully imported batch "${data.batch?.name || file.name}" with ${drafts.length} prompt(s).`,
           errors: []
         });
@@ -354,10 +380,13 @@ export const App: React.FC = () => {
 
       setActiveTab('studio');
     } catch (err: any) {
-      setImportFeedback({
-        message: err.message || 'Failed to parse JSON file.',
-        errors: [{ row: 1, message: err.message || 'JSON parse error' }]
-      });
+      setFeedbackWithAutoDismiss(
+        {
+          message: err.message || 'Failed to parse JSON file.',
+          errors: [{ row: 1, message: err.message || 'JSON parse error' }]
+        },
+        0
+      );
     } finally {
       if (e.target) e.target.value = '';
     }
@@ -430,7 +459,7 @@ export const App: React.FC = () => {
   const handleAddPastedPrompts = () => {
     const parsed = parsePlainTextPrompts(rawPasteText);
     if (parsed.items.length === 0) {
-      setImportFeedback({
+      setFeedbackWithAutoDismiss({
         message: 'No non-empty prompts were found in the pasted text.',
         errors: []
       });
@@ -441,7 +470,8 @@ export const App: React.FC = () => {
       return combined.map((item, idx) => ({ ...item, index: idx + 1 }));
     });
     setRawPasteText('');
-    setImportFeedback({
+    setPasteModalOpen(false);
+    setFeedbackWithAutoDismiss({
       message: `Added ${parsed.items.length} prompt(s)${
         parsed.skippedBlankLines > 0
           ? ` (${parsed.skippedBlankLines} blank line(s) ignored)`
@@ -485,14 +515,18 @@ export const App: React.FC = () => {
       );
     }
 
-    setImportFeedback({
-      message: `Imported ${result.items.length} prompt(s) from "${file.name}"${
-        result.skippedBlankLines > 0
-          ? ` (${result.skippedBlankLines} blank row(s) skipped)`
-          : ''
-      }.`,
-      errors: result.errors
-    });
+    setPasteModalOpen(false);
+    setFeedbackWithAutoDismiss(
+      {
+        message: `Imported ${result.items.length} prompt(s) from "${file.name}"${
+          result.skippedBlankLines > 0
+            ? ` (${result.skippedBlankLines} blank row(s) skipped)`
+            : ''
+        }.`,
+        errors: result.errors
+      },
+      result.errors.length === 0 ? 6000 : 0
+    );
     e.target.value = '';
   };
 
@@ -646,6 +680,15 @@ export const App: React.FC = () => {
     setActiveBatch(batch);
     setActiveTasks(tasks);
     setActiveTab('queue');
+
+    // Auto-clear Studio drafts after successfully creating / adding batch in queue
+    setPromptDrafts([]);
+    setRawPasteText('');
+    setFeedbackWithAutoDismiss(null);
+    setPasteModalOpen(false);
+    setLinkTaskRefsMap({});
+    setEditingDraftIndex(null);
+    setBannerError(null);
 
     if (startImmediately) {
       await dispatchBackgroundCommand({
@@ -1099,6 +1142,9 @@ export const App: React.FC = () => {
                     onClick={() => {
                       setPromptDrafts([]);
                       setLinkTaskRefsMap({});
+                      setFeedbackWithAutoDismiss(null);
+                      setRawPasteText('');
+                      setEditingDraftIndex(null);
                     }}
                   >
                     Clear All
@@ -1145,7 +1191,7 @@ export const App: React.FC = () => {
                             const expanded = expandAllPromptLines(rawPasteText);
                             setRawPasteText(expanded);
                             const count = expanded.split('\n').filter((l) => l.trim()).length;
-                            setImportFeedback({
+                            setFeedbackWithAutoDismiss({
                               message: `Expanded variations into ${count} prompts.`,
                               errors: []
                             });
@@ -1178,18 +1224,44 @@ export const App: React.FC = () => {
                       ? 'alert-banner alert-warning'
                       : 'alert-banner alert-info'
                   }
-                  style={{ marginTop: '6px' }}
+                  style={{
+                    marginTop: '6px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-start'
+                  }}
                   data-testid="import-feedback-banner"
                 >
-                  <div>{importFeedback.message}</div>
-                  {importFeedback.errors.map((err, i) => (
-                    <div
-                      key={i}
-                      style={{ color: 'var(--status-danger)', fontSize: '11.5px' }}
-                    >
-                      • {err.message}
-                    </div>
-                  ))}
+                  <div style={{ flex: 1 }}>
+                    <div>{importFeedback.message}</div>
+                    {importFeedback.errors.map((err, i) => (
+                      <div
+                        key={i}
+                        style={{ color: 'var(--status-danger)', fontSize: '11.5px' }}
+                      >
+                        • {err.message}
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    style={{
+                      padding: '0 6px',
+                      marginLeft: '8px',
+                      background: 'none',
+                      border: 'none',
+                      color: 'inherit',
+                      opacity: 0.7,
+                      fontSize: '16px',
+                      lineHeight: '1',
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => setFeedbackWithAutoDismiss(null)}
+                    title="Dismiss"
+                    aria-label="Dismiss message"
+                  >
+                    ×
+                  </button>
                 </div>
               )}
 

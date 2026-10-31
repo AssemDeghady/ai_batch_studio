@@ -285,4 +285,81 @@ describe('Background Service Worker & React UI Integration', () => {
     });
     container.remove();
   });
+
+  it('auto-clears prompts section, feedback banner, and collapses paste modal after adding in queue', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = ReactDOM.createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+      await flushAsync();
+    });
+
+    // 1. Enter prompt
+    const pasteArea = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="paste-prompts-textarea"]'
+    )!;
+    expect(pasteArea).not.toBeNull();
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+      setter?.call(pasteArea, 'Prompt 1\nPrompt 2\n\nPrompt 3');
+      pasteArea.dispatchEvent(new Event('input', { bubbles: true }));
+      pasteArea.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushAsync();
+    });
+
+    // 2. Click Add to Batch
+    const addBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="add-pasted-prompts-btn"]'
+    )!;
+    await act(async () => {
+      addBtn.click();
+      await flushAsync();
+    });
+
+    // Verify feedback banner appeared and paste box auto-collapsed
+    expect(container.querySelector('[data-testid="import-feedback-banner"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="paste-prompts-textarea"]')).toBeNull();
+
+    // Verify prompt list rendered
+    expect(container.querySelectorAll('.prompt-item').length).toBe(3);
+
+    // 3. Click Start Batch Queue
+    const startBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="start-batch-btn"]'
+    )!;
+    await act(async () => {
+      startBtn.click();
+      await flushAsync();
+    });
+
+    // Switched to Queue view
+    expect(container.querySelector('[data-testid="nav-tab-queue"]')?.classList.contains('active')).toBe(true);
+
+    // 4. Switch back to Studio tab
+    const studioTabBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="nav-tab-studio"]'
+    )!;
+    await act(async () => {
+      studioTabBtn.click();
+      await flushAsync();
+    });
+
+    // Verify Prompts section in Studio is now completely cleared
+    expect(container.querySelector('[data-testid="parsed-prompt-list"]')).toBeNull();
+    expect(container.querySelector('[data-testid="import-feedback-banner"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="prompt-count-badge"]')?.textContent
+    ).toContain('0 prompts queued');
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });
