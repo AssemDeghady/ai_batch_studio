@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "package": "npm run build && node scripts/package-zip.mjs"
+    "package": "npm run build && node scripts/package-zip.mjs",
+    "screenshots": "node scripts/generate-store-screenshots.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",
