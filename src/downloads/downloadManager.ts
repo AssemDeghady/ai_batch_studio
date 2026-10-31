@@ -486,6 +486,7 @@ export async function executeSingleOutputDownload(params: {
           downloadMethod: 'native_button',
           status: 'completed',
           completedAt: Date.now(),
+          previewUrl: adapterDl.resolvedUrl || output.previewUrl || output.sourceUrl,
           error: undefined
         };
         await saveOutput(nextOut);

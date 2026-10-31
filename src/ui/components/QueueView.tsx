@@ -8,6 +8,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Image as ImageIcon,
   Pause,
   Play,
   RefreshCw,
@@ -162,7 +163,12 @@ export const QueueView: React.FC<QueueViewProps> = ({
   >('all');
   const [currentPage, setCurrentPage] = useState(0);
   const [lightboxOutput, setLightboxOutput] = useState<OutputRecord | null>(null);
+  const [lightboxImgError, setLightboxImgError] = useState(false);
   const pageSize = 40;
+
+  React.useEffect(() => {
+    setLightboxImgError(false);
+  }, [lightboxOutput?.id]);
 
   React.useEffect(() => {
     if (!lightboxOutput) return;
@@ -1284,10 +1290,29 @@ export const QueueView: React.FC<QueueViewProps> = ({
                   autoPlay
                   style={{ maxWidth: '100%', maxHeight: '68vh' }}
                 />
+              ) : lightboxImgError ? (
+                <div
+                  style={{
+                    padding: '60px 20px',
+                    textAlign: 'center',
+                    color: 'var(--text-secondary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}
+                >
+                  <ImageIcon size={40} style={{ opacity: 0.4 }} />
+                  <div style={{ fontSize: '13px', fontWeight: 600 }}>Image Preview Unavailable</div>
+                  <div style={{ fontSize: '11.5px', maxWidth: '360px', opacity: 0.8 }}>
+                    The remote URL could not be rendered directly. Click <strong>Retry Download</strong> on this task to re-extract and save as a lossless PNG.
+                  </div>
+                </div>
               ) : (
                 <img
                   src={lightboxOutput.previewUrl || lightboxOutput.sourceUrl}
                   alt={lightboxOutput.filename}
+                  onError={() => setLightboxImgError(true)}
                   style={{
                     maxWidth: '100%',
                     maxHeight: '68vh',

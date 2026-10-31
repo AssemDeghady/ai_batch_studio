@@ -691,9 +691,9 @@ export async function initializeBackgroundServiceWorker(): Promise<void> {
         return true;
       }
 
-      if (item.filename && /\.jfif$/i.test(item.filename)) {
+      if (item.filename && /\.(jfif|jpe?g)$/i.test(item.filename)) {
         suggest({
-          filename: item.filename.replace(/\.jfif$/i, '.png'),
+          filename: item.filename.replace(/\.(jfif|jpe?g)$/i, '.png'),
           conflictAction: 'uniquify'
         });
         return true;

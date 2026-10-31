@@ -1047,6 +1047,83 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     return assets;
   }
 
+  private async extractImageAsPngDataUrl(
+    imgUrl: string,
+    imgElement?: HTMLElement | null
+  ): Promise<string | null> {
+    if (imgUrl && imgUrl.startsWith('data:image/png')) {
+      return imgUrl;
+    }
+
+    const targetUrl =
+      imgUrl ||
+      (imgElement as HTMLImageElement)?.currentSrc ||
+      (imgElement as HTMLImageElement)?.src ||
+      imgElement?.getAttribute('src') ||
+      '';
+
+    // 1. Fetch & decode via createImageBitmap in Google Flow tab context
+    if (targetUrl && typeof fetch === 'function') {
+      try {
+        const response = await fetch(targetUrl, { credentials: 'include' });
+        if (response.ok) {
+          const blob = await response.blob();
+          if (blob.type === 'image/png') {
+            return await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+          }
+          if (typeof createImageBitmap === 'function') {
+            const bitmap = await createImageBitmap(blob);
+            const canvas = this.doc.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(bitmap, 0, 0);
+              const dataUrl = canvas.toDataURL('image/png');
+              bitmap.close();
+              if (dataUrl && dataUrl.startsWith('data:image/png')) {
+                return dataUrl;
+              }
+            }
+            bitmap.close();
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Direct DOM <img> canvas drawing
+    if (imgElement) {
+      const img = (
+        imgElement.tagName.toLowerCase() === 'img'
+          ? imgElement
+          : imgElement.querySelector('img')
+      ) as HTMLImageElement | null;
+
+      if (img && (img.complete || img.naturalWidth > 0)) {
+        try {
+          const canvas = this.doc.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width || 1024;
+          canvas.height = img.naturalHeight || img.height || 1024;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+            const dataUrl = canvas.toDataURL('image/png');
+            if (dataUrl && dataUrl.startsWith('data:image/png')) {
+              return dataUrl;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    return null;
+  }
+
   public async getResults(task: TaskRecord): Promise<DetectedPlatformAsset[]> {
     const status = await this.getTaskStatus(task);
     return status.detectedAssets;
@@ -1061,6 +1138,22 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       ? this.doc.querySelector<HTMLElement>(`[data-batch-studio-asset-id="${asset.elementSelectorId}"]`)
       : null;
 
+    // A. FOR IMAGES: Lossless PNG Data URL Serialization
+    // Always convert Google Flow images directly into PNG Base64 data URLs.
+    // This prevents Windows Chrome from downloading image/jpeg as .jfif, guarantees
+    // clean .png saving on disk, and makes the UI Lightbox modal preview render without CORS/blob errors!
+    if (asset.type === 'image') {
+      const pngDataUrl = await this.extractImageAsPngDataUrl(asset.url || '', assetEl);
+      if (pngDataUrl) {
+        return {
+          initiated: true,
+          method: 'chrome_downloads',
+          resolvedUrl: pngDataUrl
+        };
+      }
+    }
+
+    // B. FOR VIDEOS (or image fallback if canvas serialization fails):
     let dlBtn = asset.elementSelectorId
       ? this.doc.querySelector<HTMLElement>(`[data-batch-studio-dl-btn="${asset.elementSelectorId}"]`)
       : null;

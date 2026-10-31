@@ -270,4 +270,44 @@ describe('GoogleFlowDomAdapter (Fixture Tests for Image & Video Workflows)', () 
     expect(subWithoutRefs.submitted).toBe(false);
     expect(subWithoutRefs.errorCode).toBe('REFERENCE_UPLOAD_FAILED');
   });
+
+  it('converts Google Flow image output to a lossless PNG data URL to prevent Windows .jfif downloads and broken previews', async () => {
+    const doc = document.implementation.createHTMLDocument('Google Flow');
+    doc.body.innerHTML = `
+      <div id="results-grid">
+        <div class="flow-output-card">
+          <img src="blob:https://flow.google.com/test-blob-uuid" data-flow-generated="true" width="1024" height="1024" />
+          <button data-testid="download-image-button">Download</button>
+        </div>
+      </div>
+    `;
+
+    const adapter = new GoogleFlowDomAdapter(
+      doc,
+      () => 'https://labs.google/fx/tools/flow'
+    );
+
+    // Mock fetch to return a sample PNG blob
+    const sampleBlob = new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: 'image/png' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(sampleBlob)
+    }));
+
+    const imageTask = makeDummyTask({
+      platform: 'google_flow',
+      taskType: 'image'
+    });
+
+    const status = await adapter.getTaskStatus(imageTask);
+    expect(status.state).toBe('completed');
+    expect(status.detectedAssets[0].extension).toBe('png');
+
+    const dlResult = await adapter.downloadResult(status.detectedAssets[0], 'Test_001.png');
+    expect(dlResult.initiated).toBe(true);
+    expect(dlResult.method).toBe('chrome_downloads');
+    expect(dlResult.resolvedUrl).toMatch(/^data:image\/png;base64,/);
+
+    vi.unstubAllGlobals();
+  });
 });
