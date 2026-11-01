@@ -108,9 +108,6 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage 
     customWin.__BATCH_STUDIO_ACTIVE_RUNTIME_ID__ = currentRuntimeId;
     customWin.__BATCH_STUDIO_MESSAGE_LISTENER__ = messageListener;
   }
-  if (typeof document !== 'undefined' && document.documentElement) {
-    document.documentElement.setAttribute('data-batch-studio-connected', currentRuntimeId);
-  }
 
   chrome.runtime.onMessage.addListener(messageListener);
 }

@@ -450,7 +450,7 @@ describe('Observable Submission Verification & Uncertain Submission Handling', (
     expect(subRes.diagnostics).toContain('could not be conclusively verified');
   });
 
-  it('transitions task to needs_attention without duplicate resubmission when submission is uncertain', async () => {
+  it('registers task as failed without pausing queue when submission is uncertain', async () => {
     await closeAndResetDatabase();
 
     const created = await createBatchWithTasks({
@@ -474,19 +474,17 @@ describe('Observable Submission Verification & Uncertain Submission Handling', (
 
     const stepResult = await stepBatchQueue(created.batch.id, adapter);
 
-    // Queue must pause on task 1 in needs_attention state!
+    // Task 1 must be registered as failed (never paused!)
     const task1 = await getTask(created.tasks[0].id);
-    expect(task1?.status).toBe('needs_attention');
+    expect(task1?.status).toBe('failed');
     expect(task1?.lastError?.code).toBe('SUBMISSION_UNCERTAIN');
 
-    // Batch status should be needs_attention
+    // Batch must never pause or halt in needs_attention; all tasks finish and complete
     const batch = await getBatch(created.batch.id);
-    expect(batch?.status).toBe('needs_attention');
-
-    // Task 2 must still be pending (NEVER blindly proceeded or duplicated!)
-    const task2 = await getTask(created.tasks[1].id);
-    expect(task2?.status).toBe('pending');
-  });
+    expect(batch?.status).not.toBe('paused');
+    expect(batch?.status).not.toBe('needs_attention');
+    expect(batch?.status).toBe('completed');
+  }, 15000);
 });
 
 describe('Error Recovery & Missing Controls', () => {

@@ -1618,6 +1618,62 @@ export const App: React.FC = () => {
                 </span>
               </div>
 
+              {/* Auto-Download Toggle */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '8px 12px',
+                  marginBottom: '12px',
+                  background: 'var(--bg-elevated)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-subtle)'
+                }}
+              >
+                <div>
+                  <label
+                    className="checkbox-row"
+                    style={{ cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={downloadSettings.autoDownload !== false}
+                      onChange={(e) =>
+                        setDownloadSettings((prev) => ({
+                          ...prev,
+                          autoDownload: e.target.checked
+                        }))
+                      }
+                      data-testid="toggle-auto-download"
+                    />
+                    <span>Auto-Download Generated Media</span>
+                  </label>
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: 'var(--text-secondary)',
+                      marginTop: '2px',
+                      paddingLeft: '22px'
+                    }}
+                  >
+                    {downloadSettings.autoDownload !== false
+                      ? 'Files are automatically saved to your configured downloads folder as each prompt completes.'
+                      : 'Files will NOT be automatically downloaded. Generation will complete without disk writes (download on-demand in Queue).'
+                    }
+                  </div>
+                </div>
+                <span
+                  className={`badge ${
+                    downloadSettings.autoDownload !== false
+                      ? 'badge-success'
+                      : 'badge-neutral'
+                  }`}
+                >
+                  {downloadSettings.autoDownload !== false ? 'Auto-Download On' : 'Auto-Download Off'}
+                </span>
+              </div>
+
               <div className="grid-2">
                 <div className="field-group">
                   <label className="field-label" htmlFor="subfolder-input">

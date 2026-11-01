@@ -327,6 +327,18 @@ export async function processTaskOutputsDownload(params: {
       await saveTask(currentTask);
     }
 
+    // If auto-download is disabled by user, record output as completed without triggering file download
+    if (currentBatch.downloadSettings.autoDownload === false) {
+      const manualOutput: OutputRecord = {
+        ...outputRecord,
+        status: 'completed',
+        completedAt: now
+      };
+      await saveOutput(manualOutput);
+      processedOutputs.push(manualOutput);
+      continue;
+    }
+
     // Execute the download for this output
     const updatedOutput = await executeSingleOutputDownload({
       batch: currentBatch,
@@ -634,11 +646,16 @@ export async function reconcileTaskDownloadState(taskId: string): Promise<{
   );
 
   if (allCompleted) {
+    const parentBatch = await getBatch(task.batchId);
+    const friendlyStatus =
+      parentBatch?.downloadSettings?.autoDownload === false
+        ? 'Generation complete.'
+        : 'Download complete.';
     const completedTask =
       task.status === 'completed'
         ? task
         : transitionTaskRecord(task, 'completed', {
-            friendlyStatus: 'Download complete.'
+            friendlyStatus
           });
     await saveTask(completedTask);
     return { task: completedTask, allCompleted: true, anyFailed: false };

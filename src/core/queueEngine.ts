@@ -56,7 +56,7 @@ export interface CreateBatchInput {
   sharedReferenceIds?: string[];
   taskReferenceIdsMap?: Record<number, string[]>;
   defaultGenerationSettings?: GenerationSettings;
-  downloadSettings?: DownloadSettings;
+  downloadSettings?: Partial<DownloadSettings>;
   timeoutSettings?: TimeoutSettings;
   targetTabId?: number;
   circuitBreakerLimit?: number;
@@ -149,9 +149,10 @@ export async function createBatchWithTasks(
   const now = Date.now();
   const batchId = `batch_${now}_${Math.random().toString(36).slice(2, 8)}`;
 
-  const downloadSettings: DownloadSettings = input.downloadSettings
-    ? structuredClone(input.downloadSettings)
-    : structuredClone(prefs.downloadPreferences);
+  const downloadSettings: DownloadSettings = {
+    ...structuredClone(prefs.downloadPreferences),
+    ...(input.downloadSettings ? structuredClone(input.downloadSettings) : {})
+  };
 
   const timeoutSettings: TimeoutSettings = input.timeoutSettings
     ? structuredClone(input.timeoutSettings)
@@ -815,30 +816,22 @@ async function recordTaskFailure(
 ): Promise<{ batch: BatchRecord; tripped: boolean }> {
   const nextCount = (batch.consecutiveFailureCount || 0) + 1;
   const limit = batch.circuitBreakerLimit ?? 3;
+  batch = {
+    ...batch,
+    consecutiveFailureCount: nextCount,
+    updatedAt: now
+  };
+  await saveBatch(batch);
+
   if (nextCount >= limit) {
-    batch = {
-      ...batch,
-      consecutiveFailureCount: nextCount,
-      status: 'paused',
-      updatedAt: now
-    };
-    await saveBatch(batch);
     await appendDiagnosticLog({
       level: 'warn',
       scope: 'queue',
       batchId: batch.id,
-      message: `Circuit breaker tripped: ${nextCount} consecutive tasks failed. Queue paused automatically to protect credits.`
+      message: `Notice: ${nextCount} consecutive tasks failed. Continuing queue without pausing for AFK batch execution.`
     });
-    return { batch, tripped: true };
-  } else {
-    batch = {
-      ...batch,
-      consecutiveFailureCount: nextCount,
-      updatedAt: now
-    };
-    await saveBatch(batch);
-    return { batch, tripped: false };
   }
+  return { batch, tripped: false };
 }
 
 /**
@@ -954,11 +947,11 @@ export async function stepBatchQueue(
     }
 
     if (evalResult.decision === 'needs_attention') {
-      const attnTask = transitionTaskRecord(activeTask, 'needs_attention', {
-        friendlyStatus: evalResult.friendlyStatus,
+      const failedTask = transitionTaskRecord(activeTask, 'failed', {
+        friendlyStatus: 'Failed task ready to retry.',
         now
       });
-      attnTask.lastError = {
+      failedTask.lastError = {
         code: inspection.errorCode || 'GENERATION_TIMEOUT',
         userMessage:
           evalResult.reason ||
@@ -970,15 +963,17 @@ export async function stepBatchQueue(
         diagnostics: inspection.diagnostics,
         occurredAt: now
       };
-      await saveTask(attnTask);
-      batch = {
-        ...batch,
-        status: 'needs_attention',
-        activeTaskId: attnTask.id,
-        updatedAt: now
-      };
-      await saveBatch(batch);
-      return { batch, tasks: await getTasksByBatch(batchId) };
+      await saveTask(failedTask);
+      await appendDiagnosticLog({
+        level: 'warn',
+        scope: 'queue',
+        batchId: batch.id,
+        taskId: failedTask.id,
+        message: `Task #${activeTask.sequenceNumber} generation timed out or uncertain (${failedTask.lastError.userMessage}). Registered as failed and continuing batch queue.`
+      });
+      const failRes = await recordTaskFailure(batch, now);
+      batch = failRes.batch;
+      return stepBatchQueue(batchId, adapter, randomFn, Date.now());
     }
 
     // evalResult.decision === 'mark_failed'
@@ -1018,17 +1013,22 @@ export async function stepBatchQueue(
     return { batch, tasks };
   }
 
-  // 2. If any task is currently in `needs_attention`, pause progression until the user resolves or skips it
+  // 2. If any task is currently in `needs_attention`, register as failed so remaining tasks continue
   const attentionTask = tasks.find((t) => t.status === 'needs_attention');
   if (attentionTask) {
-    batch = {
-      ...batch,
-      status: 'needs_attention',
-      activeTaskId: attentionTask.id,
-      updatedAt: now
-    };
-    await saveBatch(batch);
-    return { batch, tasks };
+    const autoFailedTask = transitionTaskRecord(attentionTask, 'failed', {
+      friendlyStatus: 'Failed task ready to retry.',
+      now
+    });
+    await saveTask(autoFailedTask);
+    await appendDiagnosticLog({
+      level: 'warn',
+      scope: 'queue',
+      batchId: batch.id,
+      taskId: autoFailedTask.id,
+      message: `Task #${attentionTask.sequenceNumber} was in needs_attention. Registered as failed so AFK queue continues.`
+    });
+    tasks = await getTasksByBatch(batchId);
   }
 
   // 3. Find the next `pending` task in sequence order
@@ -1191,13 +1191,13 @@ export async function stepBatchQueue(
       errorCode === 'COMMUNICATION_ERROR';
 
     if (isBlockerForWholeQueue) {
-      const attnTask = transitionTaskRecord(currentTask, 'needs_attention', {
-        friendlyStatus: availability.friendlyMessage || 'Platform temporarily unavailable.',
+      const failedTask = transitionTaskRecord(currentTask, 'failed', {
+        friendlyStatus: 'Failed task ready to retry.',
         now
       });
-      attnTask.lastError = {
+      failedTask.lastError = {
         code: errorCode,
-        userMessage: availability.friendlyMessage,
+        userMessage: availability.friendlyMessage || 'Platform temporarily unavailable.',
         recommendedAction:
           availability.recommendedAction ||
           'Open the platform website, sign in if prompted, and press Resume.',
@@ -1206,15 +1206,17 @@ export async function stepBatchQueue(
         diagnostics: availability.diagnostics,
         occurredAt: now
       };
-      await saveTask(attnTask);
-      batch = {
-        ...batch,
-        status: 'needs_attention',
-        activeTaskId: attnTask.id,
-        updatedAt: now
-      };
-      await saveBatch(batch);
-      return { batch, tasks: await getTasksByBatch(batchId) };
+      await saveTask(failedTask);
+      await appendDiagnosticLog({
+        level: 'warn',
+        scope: 'adapter',
+        batchId: batch.id,
+        taskId: failedTask.id,
+        message: `Task #${currentTask.sequenceNumber} platform unavailable (${errorCode}): ${availability.friendlyMessage}. Registered as failed and continuing queue.`
+      });
+      const failRes = await recordTaskFailure(batch, now);
+      batch = failRes.batch;
+      return stepBatchQueue(batchId, adapter, randomFn, Date.now());
     }
 
     const failedTask = transitionTaskRecord(currentTask, 'failed', {
@@ -1312,20 +1314,12 @@ export async function stepBatchQueue(
       details: submitRes.diagnostics
     });
 
-    if (targetState === 'needs_attention') {
-      batch = {
-        ...batch,
-        status: 'needs_attention',
-        activeTaskId: failedSubTask.id,
-        updatedAt: now
-      };
-      await saveBatch(batch);
-      return { batch, tasks: await getTasksByBatch(batchId) };
-    }
+    const subFailedTask = transitionTaskRecord(failedSubTask, 'failed', {
+      friendlyStatus: 'Failed task ready to retry.',
+      now
+    });
+    await saveTask(subFailedTask);
     const failRes = await recordTaskFailure(batch, now);
-    if (failRes.tripped) {
-      return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };
-    }
     batch = failRes.batch;
     return stepBatchQueue(batchId, adapter, randomFn, Date.now());
   }

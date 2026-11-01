@@ -38,8 +38,11 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
   private getLocationHref: () => string;
   private taskBaselineOutputCount = new Map<string, number>();
   private taskBaselineOutputUrls = new Map<string, Set<string>>();
+  private taskBaselineHadEmptySplash = new Map<string, boolean>();
   private taskBaselineFailedCardElements = new Map<string, Set<HTMLElement>>();
   private taskCardRetryCount = new Map<string, number>();
+  private assetElements = new Map<string, HTMLElement>();
+  private assetDownloadButtons = new Map<string, HTMLElement>();
 
   constructor(doc?: Document, getLocationHref?: () => string) {
     this.doc = doc || (typeof document !== 'undefined' ? document : ({} as Document));
@@ -362,11 +365,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       }
 
       targetInput.dispatchEvent(new Event('change', { bubbles: true }));
-      targetInput.setAttribute('data-batch-studio-attached-count', String(files.length));
-      targetInput.setAttribute(
-        'data-batch-studio-attached-types',
-        references.map((r) => r.metadata.type).join(',')
-      );
       return { attached: true };
     } catch (err) {
       return {
@@ -477,21 +475,11 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       .filter(Boolean);
     this.taskBaselineOutputCount.set(task.id, existingCount);
     this.taskBaselineOutputUrls.set(task.id, new Set(existingUrls));
-    this.doc.body?.setAttribute(
-      'data-batch-studio-baseline-outputs',
-      String(existingCount)
-    );
-    try {
-      this.doc.body?.setAttribute(
-        'data-batch-studio-baseline-urls',
-        JSON.stringify(existingUrls)
-      );
-    } catch {}
 
     const hadEmptySplash = (this.doc.body?.textContent || '')
       .toLowerCase()
       .includes('start creating or drop media');
-    this.doc.body?.setAttribute('data-batch-studio-had-empty-splash', String(hadEmptySplash));
+    this.taskBaselineHadEmptySplash.set(task.id, hadEmptySplash);
 
     const existingFailedCards = this.findAllFailedGenerationCards(task.taskType);
     this.taskBaselineFailedCardElements.set(
@@ -500,14 +488,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     );
 
     const promptText = task.finalPromptSnapshot || task.originalPrompt;
-
-    // Tag the composer so CDP debugger can also locate and focus it if Slate needs hardware Input.insertText
-    try {
-      this.doc
-        .querySelectorAll('[data-batch-studio-composer-target]')
-        .forEach((el) => el.removeAttribute('data-batch-studio-composer-target'));
-      promptInput.setAttribute('data-batch-studio-composer-target', 'true');
-    } catch {}
 
     const entryResult = await enterTextWithHumanEvents(promptInput, promptText, {
       simulateTypingPause: options?.simulateTypingPause ?? false,
@@ -573,16 +553,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       }
     }
 
-    // Tag the target button so CDP debugger can also locate its live post-attach coordinates
-    try {
-      this.doc
-        .querySelectorAll('[data-batch-studio-click-target]')
-        .forEach((el) => el.removeAttribute('data-batch-studio-click-target'));
-      if (generateBtn) {
-        generateBtn.setAttribute('data-batch-studio-click-target', 'true');
-      }
-    } catch {}
-
     // Scroll generate button into view if available
     if (generateBtn && typeof generateBtn.scrollIntoView === 'function') {
       try {
@@ -626,7 +596,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
         hadEmptySplash
       });
       if (stage1Verify.confirmed) {
-        this.doc.body?.setAttribute('data-batch-studio-active-task', task.id);
         return {
           submitted: true,
           diagnostics: `${composerInspection.diagnostics} | Target: ${targetDesc} | ${activation.diagnostics} | ${stage1Verify.diagnostics}`
@@ -667,7 +636,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
                 hadEmptySplash
               });
               if (stage2Verify.confirmed) {
-                this.doc.body?.setAttribute('data-batch-studio-active-task', task.id);
                 return {
                   submitted: true,
                   diagnostics: `${composerInspection.diagnostics} | Target: ${targetDesc} | ${debuggerLog} | ${stage2Verify.diagnostics}`
@@ -706,7 +674,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     const submissionDiagnostics = `Target: ${targetDesc} | ${debuggerLog || 'DOM Events'} | ${activation.diagnostics}`;
 
     if (!activation.activated && !debuggerLog.includes(': OK')) {
-      this.doc.body?.removeAttribute('data-batch-studio-active-task');
       return {
         submitted: false,
         errorCode: 'CONTROLS_NOT_FOUND',
@@ -728,14 +695,11 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     });
 
     if (verifyResult.confirmed) {
-      this.doc.body?.setAttribute('data-batch-studio-active-task', task.id);
       return {
         submitted: true,
         diagnostics: `${composerInspection.diagnostics} | ${submissionDiagnostics} | ${verifyResult.diagnostics}`
       };
     }
-
-    this.doc.body?.removeAttribute('data-batch-studio-active-task');
 
     if (verifyResult.uncertain) {
       return {
@@ -953,7 +917,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       // In-card retries exhausted or non-retriable: fail task cleanly so queue moves forward without delay
       this.taskCardRetryCount.delete(task.id);
       this.taskBaselineFailedCardElements.delete(task.id);
-      this.doc.body?.removeAttribute('data-batch-studio-active-task');
       return {
         state: 'failed',
         detectedAssets: [],
@@ -978,7 +941,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       )
     );
     const hasSplashDisappearedWhileGenerating =
-      this.doc.body?.getAttribute('data-batch-studio-had-empty-splash') === 'true' &&
+      (this.taskBaselineHadEmptySplash.get(task.id) ?? false) &&
       !(this.doc.body?.textContent || '').toLowerCase().includes('start creating or drop media');
 
     const hasActiveProgressText = statusEls.some((el) => {
@@ -1000,25 +963,8 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     });
 
     const allOutputs = this.findOutputElements(task.taskType);
-    const baselineAttr = this.doc.body?.getAttribute(
-      'data-batch-studio-baseline-outputs'
-    );
-    const baseline =
-      this.taskBaselineOutputCount.get(task.id) ??
-      (baselineAttr ? Number(baselineAttr) : 0);
-
+    const baseline = this.taskBaselineOutputCount.get(task.id) ?? 0;
     let baselineUrls = this.taskBaselineOutputUrls.get(task.id);
-    if (!baselineUrls) {
-      const rawUrlsAttr = this.doc.body?.getAttribute('data-batch-studio-baseline-urls');
-      if (rawUrlsAttr) {
-        try {
-          const parsed = JSON.parse(rawUrlsAttr);
-          if (Array.isArray(parsed)) {
-            baselineUrls = new Set(parsed.map(String));
-          }
-        } catch {}
-      }
-    }
 
     let newOutputElements = baselineUrls
       ? allOutputs.filter((el) => {
@@ -1069,7 +1015,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     if (detectedAssets.length > 0) {
       this.taskCardRetryCount.delete(task.id);
       this.taskBaselineFailedCardElements.delete(task.id);
-      this.doc.body?.removeAttribute('data-batch-studio-active-task');
       return {
         state: 'completed',
         detectedAssets
@@ -1102,8 +1047,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       };
     }
 
-    // No active generation indicators on the page: clean up active task tag and return idle
-    this.doc.body?.removeAttribute('data-batch-studio-active-task');
+    // No active generation indicators on the page: return idle
     return {
       state: 'idle',
       detectedAssets: []
@@ -1193,10 +1137,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       return false;
     }
     try {
-      this.doc
-        .querySelectorAll('[data-batch-studio-click-target]')
-        .forEach((node) => node.removeAttribute('data-batch-studio-click-target'));
-      el.setAttribute('data-batch-studio-click-target', 'true');
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return false;
       const res = (await chrome.runtime.sendMessage({
@@ -1232,12 +1172,12 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
 
       const idx = assets.length;
       const selectorId = `bs-flow-${taskType}-${taskId}-${idx}`;
-      el.setAttribute('data-batch-studio-asset-id', selectorId);
+      this.assetElements.set(selectorId, el);
 
       const card = el.closest('.flow-output-card, figure, article, div') || el.parentElement;
       const dlBtn = this.findOfficialDownloadButton(card);
       if (dlBtn) {
-        dlBtn.setAttribute('data-batch-studio-dl-btn', selectorId);
+        this.assetDownloadButtons.set(selectorId, dlBtn);
       }
 
       const defaultExt = taskType === 'video' ? 'mp4' : 'png';
@@ -1353,7 +1293,8 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
   ): Promise<AdapterDownloadActionResult> {
     const hasLayoutEngine = Boolean(this.doc.body && this.doc.body.offsetWidth > 0);
     const assetEl = asset.elementSelectorId
-      ? this.doc.querySelector<HTMLElement>(`[data-batch-studio-asset-id="${asset.elementSelectorId}"]`)
+      ? this.assetElements.get(asset.elementSelectorId) ||
+        this.doc.querySelector<HTMLElement>(`[data-batch-studio-asset-id="${asset.elementSelectorId}"]`)
       : null;
 
     // A. FOR IMAGES: Lossless PNG Data URL Serialization
@@ -1373,7 +1314,8 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
 
     // B. FOR VIDEOS (or image fallback if canvas serialization fails):
     let dlBtn = asset.elementSelectorId
-      ? this.doc.querySelector<HTMLElement>(`[data-batch-studio-dl-btn="${asset.elementSelectorId}"]`)
+      ? this.assetDownloadButtons.get(asset.elementSelectorId) ||
+        this.doc.querySelector<HTMLElement>(`[data-batch-studio-dl-btn="${asset.elementSelectorId}"]`)
       : null;
 
     if (!dlBtn || (hasLayoutEngine && !isElementVisible(dlBtn))) {

@@ -663,6 +663,7 @@ export async function verifySubmissionEvidence(
   const maxWait = options.maxWaitMs ?? 1500;
   const pollInterval = options.pollIntervalMs ?? 100;
   const startTime = Date.now();
+  const hasLayoutEngine = Boolean(doc.body && doc.body.offsetWidth > 0);
 
   while (Date.now() - startTime <= maxWait) {
     // Check 1: Stop button appearance
@@ -788,7 +789,15 @@ export async function verifySubmissionEvidence(
           btnText.includes('hourglass') ||
           btnText.includes('progress_activity') ||
           Boolean(options.submitBtnEl.querySelector('[role="progressbar"], mat-spinner, mat-progress-spinner'));
-        if ((isNowDisabled && options.wasSubmitBtnEnabled !== false) || switchedToStopOrSpinner) {
+        const promptStillInComposer = Boolean(
+          options.composerEl &&
+            options.expectedText &&
+            isComposerHoldingPrompt(options.composerEl, options.expectedText)
+        );
+        if (
+          switchedToStopOrSpinner ||
+          (isNowDisabled && options.wasSubmitBtnEnabled !== false && (!promptStillInComposer || !hasLayoutEngine))
+        ) {
           return {
             confirmed: true,
             uncertain: false,
@@ -801,14 +810,21 @@ export async function verifySubmissionEvidence(
 
     // Check 6b: Empty workspace splash ("Start creating or drop media") disappeared after submission
     if (options.hadEmptySplash) {
-      const bodyText = (doc.body?.innerText || doc.body?.textContent || '').toLowerCase();
-      if (!bodyText.includes('start creating or drop media')) {
-        return {
-          confirmed: true,
-          uncertain: false,
-          evidence: 'Empty project splash screen transitioned to active canvas.',
-          diagnostics: 'Submission confirmed: Workspace transitioned from empty state to generation canvas.'
-        };
+      const promptStillInComposer = Boolean(
+        options.composerEl &&
+          options.expectedText &&
+          isComposerHoldingPrompt(options.composerEl, options.expectedText)
+      );
+      if (!promptStillInComposer || !hasLayoutEngine) {
+        const bodyText = (doc.body?.innerText || doc.body?.textContent || '').toLowerCase();
+        if (!bodyText.includes('start creating or drop media')) {
+          return {
+            confirmed: true,
+            uncertain: false,
+            evidence: 'Empty project splash screen transitioned to active canvas.',
+            diagnostics: 'Submission confirmed: Workspace transitioned from empty state to generation canvas.'
+          };
+        }
       }
     }
 

@@ -870,7 +870,9 @@ export const QueueView: React.FC<QueueViewProps> = ({
                   {taskOutputs.length > 0 && (
                     <span>
                       Download:{' '}
-                      {taskOutputs.every((o) => o.status === 'completed')
+                      {batch.downloadSettings?.autoDownload === false
+                        ? `Ready (${taskOutputs.map((o) => o.filename).join(', ')})`
+                        : taskOutputs.every((o) => o.status === 'completed')
                         ? `Saved (${taskOutputs.map((o) => o.filename).join(', ')})`
                         : taskOutputs.map((o) => `${o.filename} [${o.status}]`).join(', ')}
                     </span>
@@ -904,14 +906,15 @@ export const QueueView: React.FC<QueueViewProps> = ({
                       </button>
                     )}
 
-                  {task.status === 'download_failed' && (
+                  {(task.status === 'download_failed' ||
+                    (task.status === 'completed' && batch.downloadSettings?.autoDownload === false)) && (
                     <button
                       type="button"
-                      className="btn btn-primary btn-sm"
+                      className={`btn btn-sm ${task.status === 'download_failed' ? 'btn-primary' : ''}`}
                       onClick={() => onRetryDownloadOnly(task.id)}
                       data-testid={`retry-download-btn-${task.sequenceNumber}`}
                     >
-                      <Download size={11} /> Retry Download
+                      <Download size={11} /> {task.status === 'download_failed' ? 'Retry Download' : 'Download'}
                     </button>
                   )}
 

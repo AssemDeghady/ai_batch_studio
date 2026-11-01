@@ -230,6 +230,7 @@ export interface AutoNumberingSettings {
 export type SaveDestinationMode = 'downloads_subfolder' | 'filesystem_handle';
 
 export interface DownloadSettings {
+  autoDownload?: boolean;
   saveMode: SaveDestinationMode;
   subfolder: string;
   customDirectoryName?: string;
@@ -383,6 +384,7 @@ export interface DiagnosticLogEntry {
 }
 
 export const DEFAULT_DOWNLOAD_SETTINGS: DownloadSettings = {
+  autoDownload: true,
   saveMode: 'downloads_subfolder',
   subfolder: 'BatchStudio',
   filenameTemplate: '{number}_{project}_{date}',

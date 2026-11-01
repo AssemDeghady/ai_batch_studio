@@ -34,6 +34,7 @@ import {
   getAllReferences,
   getBatch,
   getOutputsByBatch,
+  getOutputsByTask,
   getTasksByBatch
 } from '../src/storage/db';
 import { DEFAULT_DOWNLOAD_SETTINGS, TaskRecord } from '../src/types/models';
@@ -437,7 +438,7 @@ describe('End-to-End Batch & Queue Integration Tests', () => {
     );
   });
 
-  it('circuit breaker automatically pauses batch queue after consecutive task failures', async () => {
+  it('registers consecutive failures as failed without pausing queue so AFK batches continue', async () => {
     const parsed = parsePlainTextPrompts('Task 1\nTask 2\nTask 3');
     const { batch } = await createBatchWithTasks({
       name: 'CircuitBreakerBatch',
@@ -468,20 +469,64 @@ describe('End-to-End Batch & Queue Integration Tests', () => {
       userMessage: 'Generation failed on platform'
     });
 
-    // Run queue step 2 -> Task 2 fails -> consecutiveFailureCount reaches 2 (limit: 2) -> circuit breaker pauses queue!
+    // Task 3 will be actively generating
+    adapter.nextStatusByTask.set('task_' + batch.id + '_3', {
+      state: 'active',
+      detectedAssets: []
+    });
+
+    // Run queue step 2 -> Task 2 fails -> consecutiveFailureCount reaches 2 -> queue DOES NOT pause, continues to Task 3!
     const step2 = await stepBatchQueue(batch.id, adapter);
-    expect(step2.batch.status).toBe('paused');
+    expect(step2.batch.status).toBe('running');
     expect(step2.batch.consecutiveFailureCount).toBe(2);
 
-    // Further stepBatchQueue calls should not start Task 3 while paused
-    const step3 = await stepBatchQueue(batch.id, adapter);
-    expect(step3.batch.status).toBe('paused');
-    const remainingTasks = await getTasksByBatch(batch.id);
-    expect(remainingTasks[2].status).toBe('pending');
+    const tasksAfterStep2 = await getTasksByBatch(batch.id);
+    expect(tasksAfterStep2[0].status).toBe('failed');
+    expect(tasksAfterStep2[1].status).toBe('failed');
+    expect(tasksAfterStep2[2].status).toBe('generating');
+  });
 
-    // Resuming resets failure counter
-    const resumed = await resumeBatchQueue(batch.id, adapter);
-    expect(resumed.batch.consecutiveFailureCount).toBe(0);
+  it('supports disabling auto-download: marks task completed and outputs ready without triggering file download', async () => {
+    const parsed = parsePlainTextPrompts('Prompt with auto-download off');
+    const { batch, tasks } = await createBatchWithTasks({
+      name: 'NoAutoDownloadBatch',
+      platform: 'google_flow',
+      taskType: 'image',
+      prompts: parsed.items,
+      downloadSettings: {
+        autoDownload: false
+      }
+    });
+
+    const adapter = new SimulatedPlatformAdapter();
+    vi.mocked(chrome.downloads.download).mockClear();
+    // Simulate generation completion
+    adapter.nextStatusByTask.set(tasks[0].id, {
+      state: 'completed',
+      detectedAssets: [
+        {
+          index: 0,
+          type: 'image',
+          url: 'https://flow.google/image1.png',
+          extension: 'png',
+          hasNativeDownloadButton: false
+        }
+      ]
+    });
+
+    // Start batch queue to submit prompt and enter generating
+    await startBatchQueue(batch.id, adapter);
+    // Step batch queue to detect completion and process outputs
+    const result = await stepBatchQueue(batch.id, adapter);
+    const updatedTask = result.tasks[0];
+    expect(updatedTask.status).toBe('completed');
+    expect(updatedTask.friendlyStatus).toBe('Generation complete.');
+
+    const outputs = await getOutputsByTask(updatedTask.id);
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0].status).toBe('completed');
+    // Chrome downloads was not called because autoDownload is false
+    expect(chrome.downloads.download).not.toHaveBeenCalled();
   });
 
   it('cleans up orphaned reference records and blobs via cleanupOrphanReferences', async () => {
