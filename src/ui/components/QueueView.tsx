@@ -8,14 +8,12 @@ import {
   Download,
   ExternalLink,
   FileText,
-  Image as ImageIcon,
   Pause,
   Play,
   RefreshCw,
   SkipForward,
   Square,
   Terminal,
-  X,
   XCircle
 } from 'lucide-react';
 import {
@@ -162,24 +160,7 @@ export const QueueView: React.FC<QueueViewProps> = ({
     'all' | 'running' | 'pending' | 'completed' | 'failed'
   >('all');
   const [currentPage, setCurrentPage] = useState(0);
-  const [lightboxOutput, setLightboxOutput] = useState<OutputRecord | null>(null);
-  const [lightboxImgError, setLightboxImgError] = useState(false);
   const pageSize = 40;
-
-  React.useEffect(() => {
-    setLightboxImgError(false);
-  }, [lightboxOutput?.id]);
-
-  React.useEffect(() => {
-    if (!lightboxOutput) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setLightboxOutput(null);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [lightboxOutput]);
 
   const refreshTabDiagnostics = async () => {
     setLoadingTabDiag(true);
@@ -869,100 +850,6 @@ export const QueueView: React.FC<QueueViewProps> = ({
                 </div>
               )}
 
-              {/* Output Thumbnails Preview */}
-              {taskOutputs.length > 0 && (
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'center',
-                    gap: '6px',
-                    margin: '6px 0'
-                  }}
-                  data-testid={`task-outputs-${task.sequenceNumber}`}
-                >
-                  {taskOutputs.map((out) => {
-                    const preview = out.previewUrl || out.sourceUrl;
-                    const isImg = out.type === 'image';
-                    return (
-                      <div
-                        key={out.id}
-                        style={{
-                          position: 'relative',
-                          cursor: preview ? 'pointer' : 'default',
-                          borderRadius: '6px',
-                          overflow: 'hidden',
-                          border: '1px solid var(--border-subtle)',
-                          background: 'var(--bg-elevated)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          padding: preview && isImg ? '0' : '4px 8px'
-                        }}
-                        onClick={() => {
-                          if (preview) {
-                            setLightboxOutput(out);
-                          }
-                        }}
-                        title={preview ? `Click to enlarge ${out.filename}` : out.filename}
-                        data-testid={`output-thumb-${out.index}`}
-                      >
-                        {preview && isImg ? (
-                          <img
-                            src={preview}
-                            alt={out.filename}
-                            style={{
-                              width: '44px',
-                              height: '44px',
-                              objectFit: 'cover',
-                              display: 'block'
-                            }}
-                          />
-                        ) : (
-                          <div
-                            style={{
-                              fontSize: '11px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                          >
-                            <Download size={11} />
-                            <span
-                              style={{
-                                maxWidth: '110px',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
-                              }}
-                            >
-                              {out.filename}
-                            </span>
-                          </div>
-                        )}
-                        {out.status === 'completed' && (
-                          <span
-                            style={{
-                              position: preview && isImg ? 'absolute' : 'static',
-                              bottom: '2px',
-                              right: '2px',
-                              background: 'rgba(0, 0, 0, 0.75)',
-                              color: 'var(--status-success)',
-                              borderRadius: '3px',
-                              padding: '1px 3px',
-                              fontSize: '9px',
-                              fontWeight: 700
-                            }}
-                          >
-                            ✓
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
               {/* Metadata Row: Duration, Download Status, Output Filenames */}
               <div
                 style={{
@@ -1263,133 +1150,6 @@ export const QueueView: React.FC<QueueViewProps> = ({
           </div>
         )}
       </div>
-
-      {/* Lightbox Modal */}
-      {lightboxOutput && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.85)',
-            zIndex: 10000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px'
-          }}
-          onClick={() => setLightboxOutput(null)}
-          data-testid="lightbox-modal"
-        >
-          <div
-            style={{
-              maxWidth: '92vw',
-              maxHeight: '92vh',
-              backgroundColor: 'var(--bg-elevated)',
-              borderRadius: '8px',
-              padding: '12px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px',
-              border: '1px solid var(--border-subtle)',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '8px'
-              }}
-            >
-              <strong
-                style={{
-                  fontSize: '12.5px',
-                  color: 'var(--text-primary)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                {lightboxOutput.filename}
-              </strong>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => setLightboxOutput(null)}
-                aria-label="Close modal"
-              >
-                <X size={14} />
-              </button>
-            </div>
-
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                maxHeight: '70vh',
-                overflow: 'hidden',
-                backgroundColor: '#000',
-                borderRadius: '4px'
-              }}
-            >
-              {lightboxOutput.type === 'video' ? (
-                <video
-                  src={lightboxOutput.previewUrl || lightboxOutput.sourceUrl}
-                  controls
-                  autoPlay
-                  style={{ maxWidth: '100%', maxHeight: '68vh' }}
-                />
-              ) : lightboxImgError ? (
-                <div
-                  style={{
-                    padding: '60px 20px',
-                    textAlign: 'center',
-                    color: 'var(--text-secondary)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '10px'
-                  }}
-                >
-                  <ImageIcon size={40} style={{ opacity: 0.4 }} />
-                  <div style={{ fontSize: '13px', fontWeight: 600 }}>Image Preview Unavailable</div>
-                  <div style={{ fontSize: '11.5px', maxWidth: '360px', opacity: 0.8 }}>
-                    The remote URL could not be rendered directly. Click <strong>Retry Download</strong> on this task to re-extract and save as a lossless PNG.
-                  </div>
-                </div>
-              ) : (
-                <img
-                  src={lightboxOutput.previewUrl || lightboxOutput.sourceUrl}
-                  alt={lightboxOutput.filename}
-                  onError={() => setLightboxImgError(true)}
-                  style={{
-                    maxWidth: '100%',
-                    maxHeight: '68vh',
-                    objectFit: 'contain'
-                  }}
-                />
-              )}
-            </div>
-
-            <div
-              style={{
-                fontSize: '11.5px',
-                color: 'var(--text-secondary)',
-                maxHeight: '60px',
-                overflowY: 'auto'
-              }}
-            >
-              <strong>Prompt:</strong> {lightboxOutput.originalPrompt}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

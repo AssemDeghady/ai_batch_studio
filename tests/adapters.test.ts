@@ -310,4 +310,93 @@ describe('GoogleFlowDomAdapter (Fixture Tests for Image & Video Workflows)', () 
 
     vi.unstubAllGlobals();
   });
+
+  it('detects Google Flow "Failed: Failed to load image" card, auto-clicks in-card retry button up to limit, and reports failure cleanly', async () => {
+    const doc = document.implementation.createHTMLDocument('Google Flow');
+    doc.body.innerHTML = `
+      <div id="results-grid">
+        <div class="flow-tile" data-testid="flow-failed-card">
+          <div class="header">
+            <h4>Failed</h4>
+          </div>
+          <p>Failed to load image.</p>
+          <button class="retry-btn" aria-label="Retry">
+            <span class="material-symbols-outlined">replay</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+    const retryBtn = doc.querySelector<HTMLButtonElement>('.retry-btn')!;
+    let retryClicks = 0;
+    retryBtn.addEventListener('click', () => {
+      retryClicks++;
+    });
+
+    const adapter = new GoogleFlowDomAdapter(
+      doc,
+      () => 'https://labs.google/fx/tools/flow'
+    );
+
+    const failTask = makeDummyTask({
+      id: 'task_flow_failed_test',
+      platform: 'google_flow',
+      taskType: 'image'
+    });
+
+    // 1st inspection: detects failure, clicks retry button, returns active
+    const status1 = await adapter.getTaskStatus(failTask);
+    expect(status1.state).toBe('active');
+    expect(retryClicks).toBe(1);
+
+    // 2nd inspection: clicks retry button again, returns active
+    const status2 = await adapter.getTaskStatus(failTask);
+    expect(status2.state).toBe('active');
+    expect(retryClicks).toBe(2);
+
+    // 3rd inspection: in-card retries exhausted, immediately reports failed state with Flow message
+    const status3 = await adapter.getTaskStatus(failTask);
+    expect(status3.state).toBe('failed');
+    expect(status3.errorCode).toBe('GENERATION_FAILED');
+    expect(status3.userMessage).toBe('Google Flow reported: Failed to load image.');
+  });
+
+  it('ignores pre-existing baseline failed cards from earlier tasks and only detects new failures', async () => {
+    const doc = document.implementation.createHTMLDocument('Google Flow');
+    doc.body.innerHTML = `
+      <textarea data-testid="flow-prompt-input"></textarea>
+      <button data-testid="flow-generate-button">Generate</button>
+      <div id="results-grid">
+        <div class="flow-tile" data-testid="old-failed-card">
+          <h4>Failed</h4>
+          <p>Failed to load image.</p>
+          <button aria-label="Retry">replay</button>
+        </div>
+      </div>
+    `;
+
+    const adapter = new GoogleFlowDomAdapter(
+      doc,
+      () => 'https://labs.google/fx/tools/flow'
+    );
+
+    const newTask = makeDummyTask({
+      id: 'task_flow_new_test',
+      platform: 'google_flow',
+      taskType: 'image'
+    });
+
+    const genBtn = doc.querySelector<HTMLButtonElement>('[data-testid="flow-generate-button"]')!;
+    genBtn.addEventListener('click', () => {
+      genBtn.disabled = true;
+    });
+
+    // Submit prompt for new task -> baseline should capture the old-failed-card
+    const subResult = await adapter.submitTask(newTask, []);
+    expect(subResult.submitted).toBe(true);
+
+    // Task status should NOT report failure because the card was already present at baseline
+    const status = await adapter.getTaskStatus(newTask);
+    expect(status.state).not.toBe('failed');
+  });
 });

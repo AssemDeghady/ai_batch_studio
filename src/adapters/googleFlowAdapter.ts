@@ -38,6 +38,8 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
   private getLocationHref: () => string;
   private taskBaselineOutputCount = new Map<string, number>();
   private taskBaselineOutputUrls = new Map<string, Set<string>>();
+  private taskBaselineFailedCardElements = new Map<string, Set<HTMLElement>>();
+  private taskCardRetryCount = new Map<string, number>();
 
   constructor(doc?: Document, getLocationHref?: () => string) {
     this.doc = doc || (typeof document !== 'undefined' ? document : ({} as Document));
@@ -491,6 +493,12 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       .includes('start creating or drop media');
     this.doc.body?.setAttribute('data-batch-studio-had-empty-splash', String(hadEmptySplash));
 
+    const existingFailedCards = this.findAllFailedGenerationCards();
+    this.taskBaselineFailedCardElements.set(
+      task.id,
+      new Set(existingFailedCards.map((f) => f.card))
+    );
+
     const promptText = task.finalPromptSnapshot || task.originalPrompt;
 
     // Tag the composer so CDP debugger can also locate and focus it if Slate needs hardware Input.insertText
@@ -748,12 +756,160 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     };
   }
 
+  private findAllFailedGenerationCards(): Array<{
+    card: HTMLElement;
+    retryButton: HTMLElement | null;
+    message: string;
+  }> {
+    const excludedContainerSelector =
+      '.boqOnegoogleliteOgbOneGoogleBar, #gb, mat-sidenav:not(.mat-sidenav-container), .mat-drawer:not(.mat-drawer-container), nav, header, aside, [role="navigation"], [role="menu"], [data-testid*="composer"], footer, .composer, .dock, [data-testid*="dock"]';
+
+    const results: Array<{
+      card: HTMLElement;
+      retryButton: HTMLElement | null;
+      message: string;
+    }> = [];
+    const seenCards = new Set<HTMLElement>();
+
+    const candidateTileSelectors = [
+      'flow-image-tile',
+      'flow-video-tile',
+      'flow-media-tile',
+      'aisandbox-tile',
+      'flow-card',
+      '.flow-output-card',
+      '.flow-tile',
+      '.sc-tile',
+      '[data-testid*="tile"]',
+      '[data-testid*="card"]',
+      '[data-testid*="output"]',
+      '[role="region"]',
+      '[role="group"]',
+      '[role="article"]',
+      'div[class*="tile" i]',
+      'div[class*="card" i]'
+    ];
+
+    const tileElements = Array.from(
+      this.doc.querySelectorAll<HTMLElement>(candidateTileSelectors.join(', '))
+    );
+
+    const textElements = Array.from(
+      this.doc.querySelectorAll<HTMLElement>('h1, h2, h3, h4, div, span, p')
+    ).filter((el) => {
+      const txt = (el.textContent || '').trim();
+      return (
+        /failed to load image/i.test(txt) ||
+        /unusual activity/i.test(txt) ||
+        /not been charged for this generation/i.test(txt) ||
+        (/^failed$/i.test(txt) && el.children.length === 0)
+      );
+    });
+
+    const candidateCards: HTMLElement[] = [];
+    for (const tile of tileElements) {
+      if (isElementVisible(tile) && !tile.closest(excludedContainerSelector)) {
+        candidateCards.push(tile);
+      }
+    }
+    for (const textEl of textElements) {
+      if (!isElementVisible(textEl) || textEl.closest(excludedContainerSelector)) continue;
+      const card =
+        textEl.closest<HTMLElement>(candidateTileSelectors.join(', ')) ||
+        textEl.closest<HTMLElement>('[class*="tile"], [class*="card"], [role="region"], [role="group"]') ||
+        (textEl.parentElement?.parentElement as HTMLElement) ||
+        textEl.parentElement;
+      if (card && isElementVisible(card) && !card.closest(excludedContainerSelector)) {
+        candidateCards.push(card);
+      }
+    }
+
+    for (const card of candidateCards) {
+      if (seenCards.has(card)) continue;
+      const text = (card.textContent || '').trim();
+      const isFailed =
+        /failed to load image/i.test(text) ||
+        /unusual activity/i.test(text) ||
+        /not been charged for this generation/i.test(text) ||
+        (/\bfailed\b/i.test(text) && /\b(?:unable|error|trouble|try again|retry|wrong|image|activity)\b/i.test(text));
+
+      if (!isFailed) continue;
+      seenCards.add(card);
+
+      const buttons = Array.from(
+        card.querySelectorAll<HTMLElement>(
+          'button, [role="button"], md-icon-button, .mat-mdc-icon-button, [data-testid*="retry"], [aria-label*="retry" i], [aria-label*="try again" i], [aria-label*="reload" i], [aria-label*="replay" i]'
+        )
+      ).filter(isElementVisible);
+
+      let retryButton: HTMLElement | null =
+        buttons.find((b) => {
+          const label = (
+            b.getAttribute('aria-label') ||
+            b.getAttribute('title') ||
+            b.getAttribute('mattooltip') ||
+            ''
+          ).toLowerCase();
+          return /retry|try again|regenerate|reload|replay|restart/.test(label);
+        }) || null;
+
+      if (!retryButton) {
+        retryButton =
+          buttons.find((b) => {
+            const iconText = (b.textContent || '').trim().toLowerCase();
+            const fontIcon = (b.getAttribute('fonticon') || '').toLowerCase();
+            return (
+              /^(?:replay|refresh|restart_alt|redo|sync|loop|rotate_right)$/i.test(iconText) ||
+              /^(?:replay|refresh|restart_alt|redo|sync|loop|rotate_right)$/i.test(fontIcon)
+            );
+          }) || null;
+      }
+
+      if (!retryButton && buttons.length === 1) {
+        retryButton = buttons[0];
+      }
+
+      if (!retryButton && buttons.length > 0) {
+        const nonDeleteButtons = buttons.filter((b) => {
+          const combined = (
+            (b.textContent || '') +
+            ' ' +
+            (b.getAttribute('aria-label') || '') +
+            ' ' +
+            (b.className || '')
+          ).toLowerCase();
+          return !/delete|trash|remove|bin|branch|fork|undo/.test(combined);
+        });
+        if (nonDeleteButtons.length > 0) {
+          retryButton = nonDeleteButtons[0];
+        }
+      }
+
+      let message = 'Google Flow reported: Generation failed.';
+      if (/failed to load image/i.test(text)) {
+        message = 'Google Flow reported: Failed to load image.';
+      } else if (/unusual activity/i.test(text)) {
+        message = 'Google Flow reported: We noticed some unusual activity.';
+      } else if (/something went wrong/i.test(text)) {
+        message = 'Google Flow reported: Something went wrong.';
+      } else if (/unable to (?:load|generate)/i.test(text)) {
+        message = 'Google Flow reported: Unable to generate media.';
+      }
+
+      results.push({ card, retryButton, message });
+    }
+
+    return results;
+  }
+
   public async getTaskStatus(task: TaskRecord): Promise<AdapterStatusInspection> {
     // 1. Check for explicit error banner or quota message
     const errorEl = this.doc.querySelector<HTMLElement>(
       '[data-testid="flow-error-banner"], .flow-error-message, [role="alert"][data-severity="error"]'
     );
     if (errorEl) {
+      this.taskCardRetryCount.delete(task.id);
+      this.taskBaselineFailedCardElements.delete(task.id);
       return {
         state: 'failed',
         detectedAssets: [],
@@ -761,6 +917,49 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
         userMessage:
           errorEl.textContent?.trim() || 'Google Flow reported a generation error.',
         recommendedAction: 'Inspect the message on Google Flow and click Retry.'
+      };
+    }
+
+    // 1b. Check for in-card failure (e.g. "Failed to load image" or "We noticed some unusual activity")
+    const allFailedCards = this.findAllFailedGenerationCards();
+    const baselineFailed = this.taskBaselineFailedCardElements.get(task.id);
+    const newFailedCards = baselineFailed
+      ? allFailedCards.filter((f) => !baselineFailed.has(f.card))
+      : allFailedCards;
+
+    const failedCard = newFailedCards[0] || null;
+    if (failedCard) {
+      const maxInCardRetries = 2;
+      const currentRetries = this.taskCardRetryCount.get(task.id) || 0;
+
+      if (failedCard.retryButton && currentRetries < maxInCardRetries) {
+        this.taskCardRetryCount.set(task.id, currentRetries + 1);
+        try {
+          await activateControlWithEvents(failedCard.retryButton);
+          await new Promise((r) => setTimeout(r, 200));
+          if (isElementVisible(failedCard.retryButton)) {
+            await this.dispatchCdpClickOnElement(failedCard.retryButton);
+          }
+        } catch {}
+
+        await new Promise((r) => setTimeout(r, 600));
+
+        return {
+          state: 'active',
+          detectedAssets: []
+        };
+      }
+
+      // In-card retries exhausted or non-retriable: fail task cleanly so queue moves forward without delay
+      this.taskCardRetryCount.delete(task.id);
+      this.taskBaselineFailedCardElements.delete(task.id);
+      this.doc.body?.removeAttribute('data-batch-studio-active-task');
+      return {
+        state: 'failed',
+        detectedAssets: [],
+        errorCode: 'GENERATION_FAILED',
+        userMessage: failedCard.message,
+        recommendedAction: 'Inspect Google Flow or retry the task.'
       };
     }
 
@@ -868,6 +1067,8 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
 
     // If new output assets have been identified on the page, the generation has produced results!
     if (detectedAssets.length > 0) {
+      this.taskCardRetryCount.delete(task.id);
+      this.taskBaselineFailedCardElements.delete(task.id);
       this.doc.body?.removeAttribute('data-batch-studio-active-task');
       return {
         state: 'completed',
@@ -1334,5 +1535,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
   public async dispose(): Promise<void> {
     this.taskBaselineOutputCount.clear();
     this.taskBaselineOutputUrls.clear();
+    this.taskBaselineFailedCardElements.clear();
+    this.taskCardRetryCount.clear();
   }
 }

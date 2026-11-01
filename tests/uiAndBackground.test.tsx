@@ -284,7 +284,7 @@ describe('Background Service Worker & React UI Integration', () => {
     setCustomAdapterFactoryForTest(null);
   });
 
-  it('expands matrix variations in the prompt input and opens lightbox on completed output thumbnail', async () => {
+  it('expands matrix variations in the prompt input and adds variations to batch', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = ReactDOM.createRoot(container);
