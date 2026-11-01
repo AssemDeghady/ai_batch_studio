@@ -493,7 +493,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       .includes('start creating or drop media');
     this.doc.body?.setAttribute('data-batch-studio-had-empty-splash', String(hadEmptySplash));
 
-    const existingFailedCards = this.findAllFailedGenerationCards();
+    const existingFailedCards = this.findAllFailedGenerationCards(task.taskType);
     this.taskBaselineFailedCardElements.set(
       task.id,
       new Set(existingFailedCards.map((f) => f.card))
@@ -756,7 +756,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     };
   }
 
-  private findAllFailedGenerationCards(): Array<{
+  private findAllFailedGenerationCards(taskType?: TaskType): Array<{
     card: HTMLElement;
     retryButton: HTMLElement | null;
     message: string;
@@ -799,7 +799,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     ).filter((el) => {
       const txt = (el.textContent || '').trim();
       return (
-        /failed to load image/i.test(txt) ||
+        /\bfailed to load\b/i.test(txt) ||
         /unusual activity/i.test(txt) ||
         /not been charged for this generation/i.test(txt) ||
         (/^failed$/i.test(txt) && el.children.length === 0)
@@ -828,10 +828,10 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       if (seenCards.has(card)) continue;
       const text = (card.textContent || '').trim();
       const isFailed =
-        /failed to load image/i.test(text) ||
+        /\bfailed to load\b/i.test(text) ||
         /unusual activity/i.test(text) ||
         /not been charged for this generation/i.test(text) ||
-        (/\bfailed\b/i.test(text) && /\b(?:unable|error|trouble|try again|retry|wrong|image|activity)\b/i.test(text));
+        (/\bfailed\b/i.test(text) && /\b(?:unable|error|trouble|try again|retry|wrong|image|video|media|activity)\b/i.test(text));
 
       if (!isFailed) continue;
       seenCards.add(card);
@@ -886,14 +886,14 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       }
 
       let message = 'Google Flow reported: Generation failed.';
-      if (/failed to load image/i.test(text)) {
-        message = 'Google Flow reported: Failed to load image.';
+      if (/\bfailed to load\b/i.test(text)) {
+        message = taskType === 'video' ? 'Google Flow reported: Failed to load video.' : 'Google Flow reported: Failed to load image.';
       } else if (/unusual activity/i.test(text)) {
         message = 'Google Flow reported: We noticed some unusual activity.';
       } else if (/something went wrong/i.test(text)) {
         message = 'Google Flow reported: Something went wrong.';
       } else if (/unable to (?:load|generate)/i.test(text)) {
-        message = 'Google Flow reported: Unable to generate media.';
+        message = taskType === 'video' ? 'Google Flow reported: Unable to generate video.' : 'Google Flow reported: Unable to generate media.';
       }
 
       results.push({ card, retryButton, message });
@@ -921,7 +921,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     }
 
     // 1b. Check for in-card failure (e.g. "Failed to load image" or "We noticed some unusual activity")
-    const allFailedCards = this.findAllFailedGenerationCards();
+    const allFailedCards = this.findAllFailedGenerationCards(task.taskType);
     const baselineFailed = this.taskBaselineFailedCardElements.get(task.id);
     const newFailedCards = baselineFailed
       ? allFailedCards.filter((f) => !baselineFailed.has(f.card))
