@@ -40,6 +40,7 @@ import {
 } from './stateMachine';
 import {
   computeInitialObservationDelayMs,
+  computeInterPromptDelayMs,
   computeMaxTimeoutMs,
   evaluateGenerationObservation
 } from './timeoutPolicy';
@@ -1050,6 +1051,30 @@ export async function stepBatchQueue(
       });
     }
     return { batch, tasks };
+  }
+
+  // Human-like inter-prompt pacing: If earlier tasks in this batch were already executed,
+  // apply a natural random delay (e.g. 3-6s) to simulate user review and prevent anti-bot rate limits.
+  const hasLayoutEngine =
+    typeof document !== 'undefined' &&
+    Boolean(document.body && (document.body.offsetWidth > 0 || document.body.offsetHeight > 0));
+  const hasProcessedEarlierTasks = tasks.some(
+    (t) => t.status === 'completed' || t.status === 'download_failed' || t.status === 'failed'
+  );
+
+  if (hasLayoutEngine && hasProcessedEarlierTasks) {
+    const pacingMs = computeInterPromptDelayMs(batch.timeoutSettings, randomFn);
+    if (pacingMs > 0) {
+      const pacingSec = Math.round(pacingMs / 1000);
+      await appendDiagnosticLog({
+        level: 'info',
+        scope: 'queue',
+        batchId: batch.id,
+        taskId: nextPending.id,
+        message: `Human-like pacing: waiting ${pacingSec}s before submitting task #${nextPending.sequenceNumber}...`
+      });
+      await new Promise((r) => setTimeout(r, pacingMs));
+    }
   }
 
   // 4. Start preparing `nextPending`

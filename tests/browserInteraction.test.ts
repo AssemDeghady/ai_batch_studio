@@ -7,6 +7,7 @@ import {
 } from '../src/browser/domInspection';
 import {
   activateControlWithEvents,
+  computeHumanClickCoordinates,
   enterTextWithHumanEvents,
   readElementText,
   triggerEnterKeySubmission,
@@ -885,5 +886,23 @@ describe('Error Recovery & Missing Controls', () => {
     expect(verify.confirmed).toBe(false);
     expect(verify.uncertain).toBe(true);
     expect(verify.evidence).toContain('Composer still contains the original prompt');
+  });
+
+  it('computes randomized, human-like click coordinates within button boundaries', () => {
+    const rect = { left: 100, top: 200, width: 80, height: 40 };
+    const samples = new Set<string>();
+
+    for (let i = 0; i < 20; i++) {
+      const coords = computeHumanClickCoordinates(rect);
+      // Coordinates must always stay comfortably within element bounds (20% - 80% range)
+      expect(coords.clientX).toBeGreaterThanOrEqual(100 + 80 * 0.19);
+      expect(coords.clientX).toBeLessThanOrEqual(100 + 80 * 0.81);
+      expect(coords.clientY).toBeGreaterThanOrEqual(200 + 40 * 0.19);
+      expect(coords.clientY).toBeLessThanOrEqual(200 + 40 * 0.81);
+      samples.add(`${coords.clientX},${coords.clientY}`);
+    }
+
+    // Must be non-deterministic (different coordinates across multiple clicks)
+    expect(samples.size).toBeGreaterThan(1);
   });
 });

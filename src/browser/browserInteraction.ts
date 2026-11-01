@@ -102,10 +102,6 @@ export async function enterTextWithHumanEvents(
     element.dispatchEvent(new Event('focus', { bubbles: true }));
   }
 
-  if (options?.simulateTypingPause) {
-    await humanDelay(30, 80);
-  }
-
   const doc = element.ownerDocument;
   const hasLayoutEngine = Boolean(
     doc?.body &&
@@ -113,6 +109,13 @@ export async function enterTextWithHumanEvents(
         doc.body.offsetHeight > 0 ||
         doc.body.getClientRects().length > 0)
   );
+
+  // Pre-typing focus dwell: 120-220ms simulating user positioning cursor and preparing to paste
+  if (hasLayoutEngine) {
+    await humanDelay(120, 220);
+  } else if (options?.simulateTypingPause) {
+    await humanDelay(30, 80);
+  }
 
   const isInputOrTextArea =
     element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement;
@@ -357,7 +360,10 @@ export async function enterTextWithHumanEvents(
     };
   }
 
-  if (options?.simulateTypingPause) {
+  if (hasLayoutEngine) {
+    // Post-typing dwell: 150-280ms reviewing prompt before submitting
+    await humanDelay(150, 280);
+  } else if (options?.simulateTypingPause) {
     await humanDelay(30, 80);
   }
 
@@ -405,8 +411,29 @@ export function verifyEnteredText(
 }
 
 /**
+ * Computes realistic, non-deterministic click coordinates inside an element
+ * using a central-tendency distribution (inner 60% of element) to mimic human mouse clicks.
+ */
+export function computeHumanClickCoordinates(
+  rect: DOMRect | { left: number; top: number; width: number; height: number }
+): { clientX: number; clientY: number } {
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return { clientX: 0, clientY: 0 };
+  }
+  // Central tendency bell-curve: (random + random) / 2 averages 0.5
+  // Safely bounded within the inner 60% of the element (0.2 to 0.8)
+  const xRatio = 0.2 + ((Math.random() + Math.random()) / 2) * 0.6;
+  const yRatio = 0.2 + ((Math.random() + Math.random()) / 2) * 0.6;
+  return {
+    clientX: Math.round(rect.left + rect.width * xRatio),
+    clientY: Math.round(rect.top + rect.height * yRatio)
+  };
+}
+
+/**
  * Activates an interactive control (button, input[type=submit], role=button)
- * using genuine pointerdown/mousedown/pointerup/mouseup/click events.
+ * using genuine pointerdown/mousedown/pointerup/mouseup/click events with
+ * human hover dwell and button press duration.
  */
 export async function activateControlWithEvents(
   controlEl: HTMLElement,
@@ -455,18 +482,27 @@ export async function activateControlWithEvents(
     };
   }
 
+  const doc = controlEl.ownerDocument;
+  const hasLayoutEngine = Boolean(
+    doc?.body &&
+      (doc.body.offsetWidth > 0 ||
+        doc.body.offsetHeight > 0 ||
+        doc.body.getClientRects().length > 0)
+  );
+
   if (options?.simulatePause) {
     await humanDelay(20, 60);
   }
 
-  // Compute center coordinates for realistic pointer/mouse events
+  // Compute realistic non-deterministic human click coordinates within the button
   let clientX = 0;
   let clientY = 0;
   try {
     const rect = controlEl.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
-      clientX = Math.round(rect.left + rect.width / 2);
-      clientY = Math.round(rect.top + rect.height / 2);
+      const coords = computeHumanClickCoordinates(rect);
+      clientX = coords.clientX;
+      clientY = coords.clientY;
     }
   } catch {
     // Fallback for test DOM
@@ -500,7 +536,22 @@ export async function activateControlWithEvents(
     buttons: 0
   };
 
-  // Dispatch full pointer and mouse sequence
+  // Dispatch hover / mouseenter / mouseover sequence
+  try {
+    controlEl.dispatchEvent(new PointerEvent('pointerover', pointerOpts));
+    controlEl.dispatchEvent(new PointerEvent('pointerenter', pointerOpts));
+  } catch {
+    // PointerEvent fallback
+  }
+  controlEl.dispatchEvent(new MouseEvent('mouseover', mouseDownOpts));
+  controlEl.dispatchEvent(new MouseEvent('mouseenter', mouseDownOpts));
+
+  // Human hover dwell: 80-160ms between hovering over button and pressing it down
+  if (hasLayoutEngine) {
+    await humanDelay(80, 160);
+  }
+
+  // Dispatch pointerdown and mousedown
   try {
     controlEl.dispatchEvent(new PointerEvent('pointerdown', pointerOpts));
   } catch {
@@ -509,6 +560,12 @@ export async function activateControlWithEvents(
 
   controlEl.dispatchEvent(new MouseEvent('mousedown', mouseDownOpts));
 
+  // Human button depression duration: 60-120ms between pressing down and releasing
+  if (hasLayoutEngine) {
+    await humanDelay(60, 120);
+  }
+
+  // Dispatch pointerup and mouseup
   try {
     controlEl.dispatchEvent(
       new PointerEvent('pointerup', { ...pointerOpts, buttons: 0 })

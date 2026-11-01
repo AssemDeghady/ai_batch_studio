@@ -2015,6 +2015,59 @@ export const App: React.FC = () => {
                     </div>
                   </div>
 
+                  <div className="grid-2" style={{ marginTop: '10px' }}>
+                    <div className="field-group">
+                      <label
+                        className="field-label"
+                        htmlFor="inter-prompt-delay-min-input"
+                      >
+                        Inter-Prompt Min Delay (seconds)
+                      </label>
+                      <input
+                        id="inter-prompt-delay-min-input"
+                        type="number"
+                        min={0}
+                        max={30}
+                        className="input"
+                        value={timeoutSettings.interPromptDelayMinSec ?? 3}
+                        onChange={(e) =>
+                          setTimeoutSettings((prev) => ({
+                            ...prev,
+                            interPromptDelayMinSec: Math.max(0, Math.min(30, Number(e.target.value)))
+                          }))
+                        }
+                        data-testid="inter-prompt-delay-min-input"
+                      />
+                    </div>
+
+                    <div className="field-group">
+                      <label
+                        className="field-label"
+                        htmlFor="inter-prompt-delay-max-input"
+                      >
+                        Inter-Prompt Max Delay (seconds)
+                      </label>
+                      <input
+                        id="inter-prompt-delay-max-input"
+                        type="number"
+                        min={0}
+                        max={60}
+                        className="input"
+                        value={timeoutSettings.interPromptDelayMaxSec ?? 6}
+                        onChange={(e) =>
+                          setTimeoutSettings((prev) => ({
+                            ...prev,
+                            interPromptDelayMaxSec: Math.max(0, Math.min(60, Number(e.target.value)))
+                          }))
+                        }
+                        data-testid="inter-prompt-delay-max-input"
+                      />
+                    </div>
+                  </div>
+                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    Human-like randomized pause between consecutive prompts (default: 3–6s) to prevent Google BotGuard rate limits.
+                  </p>
+
                   <div className="grid-2">
                     <div className="field-group">
                       <label

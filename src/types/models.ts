@@ -248,6 +248,8 @@ export interface TimeoutSettings {
   pollIntervalSec: number;
   timeoutPolicy: TimeoutPolicyAction;
   maxAutoRetries: number;
+  interPromptDelayMinSec?: number;
+  interPromptDelayMaxSec?: number;
 }
 
 export interface GenerationSettings {
@@ -400,7 +402,9 @@ export const DEFAULT_TIMEOUT_SETTINGS: TimeoutSettings = {
   maxVideoTimeoutSec: 420,
   pollIntervalSec: 3,
   timeoutPolicy: 'keep_waiting',
-  maxAutoRetries: 2
+  maxAutoRetries: 2,
+  interPromptDelayMinSec: 3,
+  interPromptDelayMaxSec: 6
 };
 
 export const DEFAULT_GENERATION_SETTINGS: GenerationSettings = {

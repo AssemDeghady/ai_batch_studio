@@ -23,6 +23,7 @@ import {
 } from '../src/core/stateMachine';
 import {
   computeInitialObservationDelayMs,
+  computeInterPromptDelayMs,
   evaluateGenerationObservation
 } from '../src/core/timeoutPolicy';
 import {
@@ -336,6 +337,11 @@ describe('Queue State Machine & Timeout Policy', () => {
     const delayMax = computeInitialObservationDelayMs(DEFAULT_TIMEOUT_SETTINGS, () => 1);
     expect(delayMin).toBe(10000);
     expect(delayMax).toBe(15000);
+
+    const pacingMin = computeInterPromptDelayMs(DEFAULT_TIMEOUT_SETTINGS, () => 0);
+    const pacingMax = computeInterPromptDelayMs(DEFAULT_TIMEOUT_SETTINGS, () => 1);
+    expect(pacingMin).toBe(3000);
+    expect(pacingMax).toBe(6000);
 
     const submittedAt = 100000;
     const generatingTask: TaskRecord = {

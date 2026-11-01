@@ -33,6 +33,23 @@ export function computeInitialObservationDelayMs(
   return Math.round(minMs + randomFn() * (maxMs - minMs));
 }
 
+/**
+ * Computes the randomized inter-prompt delay in milliseconds between consecutive tasks
+ * to simulate realistic human review and prevent anti-bot (BotGuard) rate limits.
+ */
+export function computeInterPromptDelayMs(
+  settings: TimeoutSettings,
+  randomFn: () => number = Math.random
+): number {
+  const minSec = settings.interPromptDelayMinSec ?? 3;
+  const maxSec = settings.interPromptDelayMaxSec ?? Math.max(minSec, 6);
+  if (minSec <= 0 && maxSec <= 0) return 0;
+  const minMs = Math.max(0, minSec) * 1000;
+  const maxMs = Math.max(minMs, maxSec * 1000);
+  if (minMs === maxMs) return minMs;
+  return Math.round(minMs + randomFn() * (maxMs - minMs));
+}
+
 export function computeMaxTimeoutMs(
   taskType: TaskType,
   settings: TimeoutSettings

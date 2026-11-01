@@ -202,7 +202,9 @@ export async function dispatchDebuggerTrustedClick(
               const r = el.getBoundingClientRect();
               const enabled = Boolean(!el.disabled && el.getAttribute('aria-disabled') !== 'true' && !el.hasAttribute('disabled'));
               if (r.width <= 0 || r.height <= 0) return { enabled };
-              return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), enabled };
+              const xRatio = 0.25 + ((Math.random() + Math.random()) / 2) * 0.5;
+              const yRatio = 0.25 + ((Math.random() + Math.random()) / 2) * 0.5;
+              return { x: Math.round(r.left + r.width * xRatio), y: Math.round(r.top + r.height * yRatio), enabled };
             })()`,
             returnByValue: true
           })) as { result?: { value?: { x?: number; y?: number; enabled?: boolean } } } | undefined;
@@ -224,7 +226,8 @@ export async function dispatchDebuggerTrustedClick(
         x: targetX,
         y: targetY
       });
-      await new Promise((r) => setTimeout(r, 35));
+      // Human hover dwell: 85-140ms
+      await new Promise((r) => setTimeout(r, 85 + Math.floor(Math.random() * 55)));
       await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
         type: 'mousePressed',
         x: targetX,
@@ -233,7 +236,8 @@ export async function dispatchDebuggerTrustedClick(
         buttons: 1,
         clickCount: 1
       });
-      await new Promise((r) => setTimeout(r, 50));
+      // Human button press hold: 65-110ms
+      await new Promise((r) => setTimeout(r, 65 + Math.floor(Math.random() * 45)));
       await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
         type: 'mouseReleased',
         x: targetX,
