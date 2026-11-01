@@ -926,7 +926,17 @@ export async function stepBatchQueue(
         const postTask = await getTask(detectedTask.id);
         if (postTask?.status === 'completed') {
           batch = await recordTaskSuccess(batch);
-        } else if (postTask?.status === 'download_failed' || postTask?.status === 'failed') {
+        } else if (postTask?.status === 'download_failed') {
+          // Generation succeeded, but output file download could not complete after in-task retries.
+          // Non-pausing rule: Keep the batch queue running while task is explicitly flagged as download_failed.
+          await appendDiagnosticLog({
+            level: 'warn',
+            scope: 'download',
+            batchId: batch.id,
+            taskId: postTask.id,
+            message: `Task #${postTask.sequenceNumber} generated output successfully, but file download failed. Continuing batch queue without pausing.`
+          });
+        } else if (postTask?.status === 'failed') {
           const failRes = await recordTaskFailure(batch, now);
           if (failRes.tripped) {
             return { batch: failRes.batch, tasks: await getTasksByBatch(batchId) };

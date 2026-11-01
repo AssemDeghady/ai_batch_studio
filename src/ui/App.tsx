@@ -149,6 +149,7 @@ export const App: React.FC = () => {
   const jsonFileInputRef = useRef<HTMLInputElement | null>(null);
   const refUploadInputRef = useRef<HTMLInputElement | null>(null);
   const prevBatchStatusRef = useRef<string | undefined>(undefined);
+  const prevDownloadFailedCountRef = useRef<number>(0);
   const feedbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const setFeedbackWithAutoDismiss = (
@@ -256,9 +257,11 @@ export const App: React.FC = () => {
     };
   }, [activeBatch?.id]);
 
-  // Audio chime effect on batch completion or attention needed
+  // Audio chime effect on batch completion, attention needed, or download failure
   useEffect(() => {
     if (activeBatch) {
+      const downloadFailedCount = activeTasks.filter((t) => t.status === 'download_failed').length;
+
       if (
         prevBatchStatusRef.current === 'running' &&
         activeBatch.status === 'completed'
@@ -272,12 +275,21 @@ export const App: React.FC = () => {
               (activeBatch.circuitBreakerLimit ?? 3)))
       ) {
         if (soundEnabled) playAttentionChime();
+      } else if (
+        downloadFailedCount > prevDownloadFailedCountRef.current &&
+        activeBatch.status === 'running'
+      ) {
+        // Output completed generation but download failed while queue continues running
+        if (soundEnabled) playAttentionChime();
       }
+
       prevBatchStatusRef.current = activeBatch.status;
+      prevDownloadFailedCountRef.current = downloadFailedCount;
     } else {
       prevBatchStatusRef.current = undefined;
+      prevDownloadFailedCountRef.current = 0;
     }
-  }, [activeBatch?.status, activeBatch?.consecutiveFailureCount, soundEnabled]);
+  }, [activeBatch?.status, activeBatch?.consecutiveFailureCount, activeTasks, soundEnabled]);
 
   const handleExportBatchJson = () => {
     const exportBatch = activeBatch || {

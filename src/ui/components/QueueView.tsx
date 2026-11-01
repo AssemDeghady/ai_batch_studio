@@ -216,6 +216,8 @@ export const QueueView: React.FC<QueueViewProps> = ({
       t.status === 'download_failed' ||
       t.status === 'needs_attention'
   ).length;
+  const downloadFailedTasks = tasks.filter((t) => t.status === 'download_failed');
+  const downloadFailedCount = downloadFailedTasks.length;
 
   const progressPct =
     totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
@@ -385,6 +387,59 @@ export const QueueView: React.FC<QueueViewProps> = ({
               </span>
             </div>
           )}
+
+        {/* Download Failed Non-Pausing Alert Banner */}
+        {downloadFailedCount > 0 && (
+          <div
+            className="alert-banner alert-warning"
+            style={{
+              marginTop: '10px',
+              borderLeft: '3px solid var(--status-warning, #f59e0b)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px'
+            }}
+            data-testid="download-failed-banner"
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '8px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <AlertTriangle size={14} style={{ color: 'var(--status-warning, #f59e0b)' }} />
+                <strong>
+                  {downloadFailedCount} generated output{downloadFailedCount > 1 ? 's' : ''} failed to download
+                </strong>
+              </div>
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={async () => {
+                  const ids = downloadFailedTasks.map((t) => t.id);
+                  await onRetrySelectedTasks(ids);
+                }}
+                data-testid="retry-download-failed-btn"
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <RefreshCw size={11} /> Retry Failed Download{downloadFailedCount > 1 ? 's' : ''} ({downloadFailedCount})
+              </button>
+            </div>
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+              The batch queue is continuing without interruption. Your generated media is preserved and can be downloaded anytime.
+            </span>
+          </div>
+        )}
 
         {/* Counters Grid */}
         <div className="grid-4" style={{ marginTop: '10px' }}>

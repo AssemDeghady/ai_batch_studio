@@ -348,9 +348,9 @@ export async function processTaskOutputsDownload(params: {
 }
 
 /**
- * Executes or retries the download for a single OutputRecord without regenerating the asset.
+ * Executes a single download attempt for an OutputRecord.
  */
-export async function executeSingleOutputDownload(params: {
+async function executeSingleOutputDownloadAttempt(params: {
   batch: BatchRecord;
   task: TaskRecord;
   output: OutputRecord;
@@ -549,6 +549,46 @@ export async function executeSingleOutputDownload(params: {
   };
   await saveOutput(failedOut);
   return failedOut;
+}
+
+/**
+ * Executes or retries the download for a single OutputRecord with immediate in-task auto-retry
+ * (up to 3 attempts with a 1000ms delay between attempts) before declaring download failure.
+ * Never regenerates the asset.
+ */
+export async function executeSingleOutputDownload(params: {
+  batch: BatchRecord;
+  task: TaskRecord;
+  output: OutputRecord;
+  asset?: DetectedPlatformAsset;
+  adapter?: PlatformAdapter;
+}): Promise<OutputRecord> {
+  const MAX_ATTEMPTS = 3;
+  let currentOutput = params.output;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    currentOutput = await executeSingleOutputDownloadAttempt({
+      ...params,
+      output: currentOutput
+    });
+
+    if (currentOutput.status === 'completed' || currentOutput.status === 'in_progress') {
+      return currentOutput;
+    }
+
+    if (attempt < MAX_ATTEMPTS) {
+      await appendDiagnosticLog({
+        level: 'warn',
+        scope: 'download',
+        batchId: params.batch.id,
+        taskId: params.task.id,
+        message: `Download attempt ${attempt} of ${MAX_ATTEMPTS} for "${currentOutput.filename}" was not completed (${currentOutput.status}: ${currentOutput.error || 'unspecified'}). Retrying automatically in 1000ms...`
+      });
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+
+  return currentOutput;
 }
 
 /**

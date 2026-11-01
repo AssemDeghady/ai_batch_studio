@@ -11,6 +11,7 @@ import { parsePlainTextPrompts } from '../src/core/promptParser';
 import { createBatchWithTasks } from '../src/core/queueEngine';
 import { getBatch, getTasksByBatch } from '../src/storage/db';
 import { App } from '../src/ui/App';
+import { QueueView } from '../src/ui/components/QueueView';
 import {
   AdapterDownloadActionResult,
   AdapterStatusInspection,
@@ -19,7 +20,64 @@ import {
   PlatformAdapter,
   PlatformAvailabilityResult
 } from '../src/adapters/types';
-import { TaskRecord } from '../src/types/models';
+import { BatchRecord, TaskRecord } from '../src/types/models';
+
+function makeBatch(overrides: Partial<BatchRecord> = {}): BatchRecord {
+  return {
+    id: 'batch_test_1',
+    name: 'Test Batch',
+    platform: 'google_flow',
+    taskType: 'image',
+    globalPrefix: '',
+    prefixEnabled: false,
+    prefixSeparator: ', ',
+    referenceIds: [],
+    defaultGenerationSettings: {},
+    status: 'running',
+    taskIds: ['task_dl_1'],
+    nextOutputSequenceNumber: 1,
+    downloadSettings: {
+      subfolder: '',
+      filenameTemplate: '{number}_{prompt}',
+      conflictAction: 'uniquify',
+      saveMode: 'downloads_subfolder',
+      autoNumbering: { enabled: true, paddingDigits: 3, startNumber: 1, separator: '_' }
+    },
+    timeoutSettings: {
+      initialObservationMinSec: 10,
+      initialObservationMaxSec: 15,
+      maxImageTimeoutSec: 120,
+      maxVideoTimeoutSec: 360,
+      pollIntervalSec: 2,
+      timeoutPolicy: 'keep_waiting',
+      maxAutoRetries: 1
+    },
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    ...overrides
+  };
+}
+
+function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
+  return {
+    id: 'task_dl_1',
+    batchId: 'batch_test_1',
+    sequenceNumber: 1,
+    originalPrompt: 'A test prompt',
+    finalPromptSnapshot: 'A test prompt',
+    platform: 'google_flow',
+    taskType: 'image',
+    status: 'download_failed',
+    friendlyStatus: 'Generation complete, but the download needs attention.',
+    referenceIds: [],
+    generationSettings: {},
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    retryCount: 0,
+    outputIds: [],
+    ...overrides
+  };
+}
 
 class BackgroundTestAdapter implements PlatformAdapter {
   public readonly platformId = 'chatgpt' as const;
@@ -356,6 +414,65 @@ describe('Background Service Worker & React UI Integration', () => {
     expect(
       container.querySelector('[data-testid="prompt-count-badge"]')?.textContent
     ).toContain('0 prompts queued');
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('displays download failed banner and retry button when task status is download_failed while queue continues', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = ReactDOM.createRoot(container);
+
+    const mockBatch = makeBatch({
+      id: 'batch_dl_failed_test',
+      name: 'Download Failure Test Batch',
+      status: 'running'
+    });
+    const mockTask = makeTask({
+      id: 'task_dl_1',
+      batchId: 'batch_dl_failed_test',
+      status: 'download_failed',
+      sequenceNumber: 1,
+      friendlyStatus: 'Generation complete, but the download needs attention.'
+    });
+
+    await act(async () => {
+      root.render(
+        <QueueView
+          batch={mockBatch}
+          tasks={[mockTask]}
+          outputsByTask={{}}
+          referencesMap={{}}
+          diagnosticLogs={[]}
+          onStart={async () => {}}
+          onPause={async () => {}}
+          onResume={async () => {}}
+          onStop={async () => {}}
+          onRetrySingleTask={async () => {}}
+          onRetrySelectedTasks={async () => {}}
+          onRetryAllFailed={async () => {}}
+          onRetryDownloadOnly={async () => {}}
+          onSkipTask={async () => {}}
+          onUpdateTaskPrompt={async () => {}}
+          onOpenPlatformTab={() => {}}
+        />
+      );
+      await flushAsync();
+    });
+
+    // 1. Verify download-failed alert banner is rendered prominently
+    const banner = container.querySelector('[data-testid="download-failed-banner"]');
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain('1 generated output failed to download');
+    expect(banner?.textContent).toContain('The batch queue is continuing without interruption');
+
+    // 2. Verify Retry Failed Downloads button is present
+    const retryBtn = container.querySelector('[data-testid="retry-download-failed-btn"]');
+    expect(retryBtn).not.toBeNull();
+    expect(retryBtn?.textContent).toContain('Retry Failed Download (1)');
 
     await act(async () => {
       root.unmount();

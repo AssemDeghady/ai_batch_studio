@@ -560,13 +560,33 @@ export function triggerEnterKeySubmission(composerEl: HTMLElement): boolean {
   }
 }
 
+export function isComposerHoldingPrompt(
+  composerEl: HTMLElement | null | undefined,
+  expectedText?: string
+): boolean {
+  if (!composerEl || !expectedText) return false;
+  const currentText = normalizeText(readElementText(composerEl));
+  const expected = normalizeText(expectedText);
+  if (!currentText || !expected) return false;
+
+  if (currentText === expected || currentText.includes(expected)) {
+    return true;
+  }
+  const prefix = expected.slice(0, Math.min(30, expected.length));
+  if (prefix.length >= 10 && currentText.includes(prefix)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Observes post-click evidence of submission:
+ * - Did a stop button appear?
+ * - Did an active loading/progress/percentage indicator appear?
+ * - Did turn count or output/media count increase (guarded against unsubmitted composer)?
  * - Did the composer text clear or reset?
  * - Did the submit button become disabled, detached, or change to a stop/loading icon?
- * - Did an active loading/progress/percentage indicator appear?
  * - Did the empty workspace splash ("Start creating or drop media") disappear?
- * - Did turn count or output/media count increase?
  * - Did an explicit error alert appear?
  */
 export async function verifySubmissionEvidence(
@@ -654,19 +674,29 @@ export async function verifySubmissionEvidence(
     }
 
     // Check 4: Output count increased (Google Flow — strictly using queryGeneratedOutputElements to exclude account avatars)
+    // CRITICAL GUARD: If the composer still contains the prompt text, any output element that just rendered
+    // is from the PREVIOUS task finishing, not this one. Do not confirm on output count while prompt remains in composer.
     if (typeof options.previousOutputCount === 'number') {
       const currentOutputs = queryGeneratedOutputElements(doc);
       if (currentOutputs.length > options.previousOutputCount) {
-        return {
-          confirmed: true,
-          uncertain: false,
-          evidence: `Output count increased from ${options.previousOutputCount} to ${currentOutputs.length}.`,
-          diagnostics: 'Submission confirmed: New output element rendered.'
-        };
+        const promptStillInComposer = Boolean(
+          options.composerEl &&
+            options.expectedText &&
+            isComposerHoldingPrompt(options.composerEl, options.expectedText)
+        );
+        if (!promptStillInComposer) {
+          return {
+            confirmed: true,
+            uncertain: false,
+            evidence: `Output count increased from ${options.previousOutputCount} to ${currentOutputs.length}.`,
+            diagnostics: 'Submission confirmed: New output element rendered.'
+          };
+        }
       }
     }
 
     // Check 5: Composer cleared or reset
+    // Both ChatGPT and Google Flow atomically clear/reset the active composer upon successful submission.
     if (options.composerEl && options.expectedText) {
       const currentText = normalizeText(readElementText(options.composerEl));
       const expectedText = normalizeText(options.expectedText);
@@ -746,7 +776,7 @@ export async function verifySubmissionEvidence(
     confirmed: false,
     uncertain: true,
     evidence:
-      options.composerEl && options.expectedText && normalizeText(readElementText(options.composerEl)) === normalizeText(options.expectedText)
+      options.composerEl && options.expectedText && isComposerHoldingPrompt(options.composerEl, options.expectedText)
         ? 'Composer still contains the original prompt; no page state change observed.'
         : 'Ambiguous page state: no generation indicator or turn creation was observed after submit control activation.',
     diagnostics:

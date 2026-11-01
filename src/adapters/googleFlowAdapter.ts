@@ -11,6 +11,7 @@ import {
 import {
   activateControlWithEvents,
   enterTextWithHumanEvents,
+  isComposerHoldingPrompt,
   triggerEnterKeySubmission,
   verifySubmissionEvidence
 } from '../browser/browserInteraction';
@@ -474,7 +475,6 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       .filter(Boolean);
     this.taskBaselineOutputCount.set(task.id, existingCount);
     this.taskBaselineOutputUrls.set(task.id, new Set(existingUrls));
-    this.doc.body?.setAttribute('data-batch-studio-active-task', task.id);
     this.doc.body?.setAttribute(
       'data-batch-studio-baseline-outputs',
       String(existingCount)
@@ -618,6 +618,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
         hadEmptySplash
       });
       if (stage1Verify.confirmed) {
+        this.doc.body?.setAttribute('data-batch-studio-active-task', task.id);
         return {
           submitted: true,
           diagnostics: `${composerInspection.diagnostics} | Target: ${targetDesc} | ${activation.diagnostics} | ${stage1Verify.diagnostics}`
@@ -658,6 +659,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
                 hadEmptySplash
               });
               if (stage2Verify.confirmed) {
+                this.doc.body?.setAttribute('data-batch-studio-active-task', task.id);
                 return {
                   submitted: true,
                   diagnostics: `${composerInspection.diagnostics} | Target: ${targetDesc} | ${debuggerLog} | ${stage2Verify.diagnostics}`
@@ -696,6 +698,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     const submissionDiagnostics = `Target: ${targetDesc} | ${debuggerLog || 'DOM Events'} | ${activation.diagnostics}`;
 
     if (!activation.activated && !debuggerLog.includes(': OK')) {
+      this.doc.body?.removeAttribute('data-batch-studio-active-task');
       return {
         submitted: false,
         errorCode: 'CONTROLS_NOT_FOUND',
@@ -717,11 +720,14 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     });
 
     if (verifyResult.confirmed) {
+      this.doc.body?.setAttribute('data-batch-studio-active-task', task.id);
       return {
         submitted: true,
         diagnostics: `${composerInspection.diagnostics} | ${submissionDiagnostics} | ${verifyResult.diagnostics}`
       };
     }
+
+    this.doc.body?.removeAttribute('data-batch-studio-active-task');
 
     if (verifyResult.uncertain) {
       return {
@@ -869,23 +875,34 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
       };
     }
 
-    // Only if NO new assets were detected yet do we check if generation is still in progress
-    const isActiveSubmittedFlowTask =
-      hasLayoutEngine &&
-      this.doc.body?.getAttribute('data-batch-studio-active-task') === task.id;
+    // Check if the prompt is still sitting in the composer input box
+    const promptInput = this.doc.querySelector<HTMLElement>(
+      'div.ProseMirror[contenteditable="true"], textarea[data-testid="flow-prompt-input"], div[contenteditable="true"]'
+    );
+    const promptText = task.finalPromptSnapshot || task.originalPrompt;
+    const composerStillHasPrompt = Boolean(
+      promptInput && promptText && isComposerHoldingPrompt(promptInput, promptText)
+    );
 
-    if (
-      spinnerEl ||
-      hasActiveProgressText ||
-      hasSplashDisappearedWhileGenerating ||
-      isActiveSubmittedFlowTask
-    ) {
+    // Active generation is ONLY confirmed by observable progress indicators
+    // (spinners, progress bars, shimmer skeletons, or percentage text)
+    if (spinnerEl || hasActiveProgressText) {
       return {
         state: 'active',
         detectedAssets: []
       };
     }
 
+    // If splash disappeared, only treat as active if composer doesn't still hold the unsubmitted prompt
+    if (hasSplashDisappearedWhileGenerating && !composerStillHasPrompt) {
+      return {
+        state: 'active',
+        detectedAssets: []
+      };
+    }
+
+    // No active generation indicators on the page: clean up active task tag and return idle
+    this.doc.body?.removeAttribute('data-batch-studio-active-task');
     return {
       state: 'idle',
       detectedAssets: []

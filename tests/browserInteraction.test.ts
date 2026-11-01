@@ -852,4 +852,38 @@ describe('Error Recovery & Missing Controls', () => {
     );
     expect(doneStatus.detectedAssets[0].extension).toBe('png');
   });
+
+  it('guarantees that an output count increase while prompt remains in composer does NOT confirm submission', async () => {
+    const doc = document.implementation.createHTMLDocument('Previous Output Race Test');
+    const composer = doc.createElement('textarea');
+    composer.value = 'Task #32: Next prompt to submit';
+    doc.body.appendChild(composer);
+
+    const submitBtn = doc.createElement('button');
+    submitBtn.textContent = 'Submit';
+    doc.body.appendChild(submitBtn);
+
+    // Baseline: 1 output already on page
+    const existingImg = doc.createElement('img');
+    existingImg.src = 'https://lh3.googleusercontent.com/aida/previous-task-image-31';
+    doc.body.appendChild(existingImg);
+
+    // Simulate task #31 finishing in background: a second output appears, but composer still holds task #32
+    const prevTaskFinishImg = doc.createElement('img');
+    prevTaskFinishImg.src = 'https://lh3.googleusercontent.com/aida/previous-task-image-31-upscaled';
+    doc.body.appendChild(prevTaskFinishImg);
+
+    const verify = await verifySubmissionEvidence(doc, {
+      composerEl: composer,
+      submitBtnEl: submitBtn,
+      expectedText: 'Task #32: Next prompt to submit',
+      previousOutputCount: 1, // Was 1, now 2 in DOM
+      maxWaitMs: 80
+    });
+
+    // Must NOT confirm submission because the prompt is still sitting unsubmitted in the composer!
+    expect(verify.confirmed).toBe(false);
+    expect(verify.uncertain).toBe(true);
+    expect(verify.evidence).toContain('Composer still contains the original prompt');
+  });
 });
