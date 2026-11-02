@@ -4,8 +4,10 @@ import { isGoogleFlowUrl } from '../services/tabDiscovery';
 import {
   discoverComposerCandidates,
   discoverSubmitControlCandidates,
+  getElementMediaSourceUrl,
   inspectObservableGenerationState,
   isElementVisible,
+  normalizeAssetUrl,
   queryGeneratedOutputElements
 } from '../browser/domInspection';
 import {
@@ -463,15 +465,7 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     const existingElements = this.findOutputElements(task.taskType);
     const existingCount = existingElements.length;
     const existingUrls = existingElements
-      .map((el) =>
-        (
-          (el as HTMLImageElement | HTMLVideoElement).currentSrc ||
-          (el as HTMLImageElement | HTMLVideoElement).src ||
-          el.getAttribute('src') ||
-          el.querySelector('source')?.getAttribute('src') ||
-          ''
-        ).trim()
-      )
+      .map((el) => normalizeAssetUrl(getElementMediaSourceUrl(el)))
       .filter(Boolean);
     this.taskBaselineOutputCount.set(task.id, existingCount);
     this.taskBaselineOutputUrls.set(task.id, new Set(existingUrls));
@@ -736,6 +730,9 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     const seenCards = new Set<HTMLElement>();
 
     const candidateTileSelectors = [
+      '.error-tile',
+      '.error-tile-content',
+      '[class*="error-tile"]',
       'flow-image-tile',
       'flow-video-tile',
       'flow-media-tile',
@@ -766,6 +763,9 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
         /\bfailed to load\b/i.test(txt) ||
         /unusual activity/i.test(txt) ||
         /not been charged for this generation/i.test(txt) ||
+        /refunded for this generation/i.test(txt) ||
+        /violate our policies/i.test(txt) ||
+        /policy violation/i.test(txt) ||
         (/^failed$/i.test(txt) && el.children.length === 0)
       );
     });
@@ -791,11 +791,24 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     for (const card of candidateCards) {
       if (seenCards.has(card)) continue;
       const text = (card.textContent || '').trim();
+      const isExplicitErrorTile =
+        card.classList.contains('error-tile') ||
+        card.classList.contains('error-tile-content') ||
+        Boolean(card.querySelector('.error-tile, .error-tile-content, .error-title, .error-message-text'));
+
+      const isPolicyViolation =
+        /violate our policies/i.test(text) ||
+        /policy violation/i.test(text) ||
+        (/\bpolicy\b/i.test(text) && /\b(?:harmful|minors|violate|guideline|safety)\b/i.test(text));
+
       const isFailed =
+        isExplicitErrorTile ||
+        isPolicyViolation ||
         /\bfailed to load\b/i.test(text) ||
         /unusual activity/i.test(text) ||
         /not been charged for this generation/i.test(text) ||
-        (/\bfailed\b/i.test(text) && /\b(?:unable|error|trouble|try again|retry|wrong|image|video|media|activity)\b/i.test(text));
+        /refunded for this generation/i.test(text) ||
+        (/\bfailed\b/i.test(text) && /\b(?:unable|error|trouble|try again|retry|wrong|image|video|media|activity|policy|policies|violate|refunded)\b/i.test(text));
 
       if (!isFailed) continue;
       seenCards.add(card);
@@ -849,8 +862,24 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
         }
       }
 
+      // Do NOT retry policy violations (it risks account warning/lockout)
+      if (isPolicyViolation) {
+        retryButton = null;
+      }
+
       let message = 'Google Flow reported: Generation failed.';
-      if (/\bfailed to load\b/i.test(text)) {
+      const errorMsgEl = card.querySelector<HTMLElement>(
+        '.error-message-text, .error-subtitle, .error-message'
+      );
+      const specificErrorText = errorMsgEl ? (errorMsgEl.textContent || '').trim() : '';
+
+      if (isPolicyViolation) {
+        message = specificErrorText
+          ? `Google Flow policy violation: ${specificErrorText}`
+          : 'Google Flow reported: This prompt might violate content policies.';
+      } else if (specificErrorText && specificErrorText.length < 250) {
+        message = `Google Flow reported: ${specificErrorText}`;
+      } else if (/\bfailed to load\b/i.test(text)) {
         message = taskType === 'video' ? 'Google Flow reported: Failed to load video.' : 'Google Flow reported: Failed to load image.';
       } else if (/unusual activity/i.test(text)) {
         message = 'Google Flow reported: We noticed some unusual activity.';
@@ -893,7 +922,12 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
 
     const failedCard = newFailedCards[0] || null;
     if (failedCard) {
-      const maxInCardRetries = 2;
+      const isPolicyViolation =
+        /policy/i.test(failedCard.message) ||
+        /violate/i.test(failedCard.message) ||
+        /policy|violate/i.test(failedCard.card.textContent || '');
+
+      const maxInCardRetries = isPolicyViolation ? 0 : 2;
       const currentRetries = this.taskCardRetryCount.get(task.id) || 0;
 
       if (failedCard.retryButton && currentRetries < maxInCardRetries) {
@@ -922,7 +956,9 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
         detectedAssets: [],
         errorCode: 'GENERATION_FAILED',
         userMessage: failedCard.message,
-        recommendedAction: 'Inspect Google Flow or retry the task.'
+        recommendedAction: isPolicyViolation
+          ? 'Modify the prompt to avoid restricted terms and try again.'
+          : 'Inspect Google Flow or retry the task.'
       };
     }
 
@@ -968,14 +1004,9 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
 
     let newOutputElements = baselineUrls
       ? allOutputs.filter((el) => {
-          const src = (
-            (el as HTMLImageElement | HTMLVideoElement).currentSrc ||
-            (el as HTMLImageElement | HTMLVideoElement).src ||
-            el.getAttribute('src') ||
-            el.querySelector('source')?.getAttribute('src') ||
-            ''
-          ).trim();
-          return Boolean(src) && !baselineUrls!.has(src);
+          const rawSrc = getElementMediaSourceUrl(el);
+          const normSrc = normalizeAssetUrl(rawSrc);
+          return Boolean(normSrc) && !baselineUrls!.has(normSrc);
         })
       : [];
 
@@ -1113,17 +1144,33 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
   }
 
   private findOriginalSizeMenuItem(): HTMLElement | null {
+    // Only search interactive menu item buttons/elements, NOT interior text spans
     const candidates = Array.from(
       this.doc.querySelectorAll<HTMLElement>(
-        '[role="menuitem"], [role="option"], .mat-mdc-menu-item, .cdk-overlay-pane button, [data-radix-popper-content-wrapper] *, button, div[tabindex]'
+        'button[role="menuitem"], [role="menuitem"], .mat-mdc-menu-item, .cdk-overlay-pane button'
       )
     ).filter(isElementVisible);
 
+    // 1. Highest priority: Explicit "original size"
+    const originalItem = candidates.find((item) => {
+      const txt = (item.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      return txt.includes('original size') && !txt.includes('gif');
+    });
+    if (originalItem) return originalItem;
+
+    // 2. Second priority: Base generation resolution (360p)
+    const baseResItem = candidates.find((item) => {
+      const txt = (item.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      return /\b360p\b/.test(txt) && !txt.includes('gif');
+    });
+    if (baseResItem) return baseResItem;
+
+    // 3. Fallback: 720p, 1080p, or 1k
     return (
       candidates.find((item) => {
         const txt = (item.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
         return (
-          (txt.includes('original size') || /\b1k\b/.test(txt) || /\b360p\b/.test(txt) || /\b720p\b/.test(txt)) &&
+          /\b(?:1k|720p|1080p)\b/.test(txt) &&
           !txt.includes('2k') &&
           !txt.includes('4k') &&
           !txt.includes('gif')
@@ -1160,15 +1207,11 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
     const seenUrls = new Set<string>();
 
     elements.forEach((el) => {
-      const src = (
-        (el as HTMLImageElement | HTMLVideoElement).currentSrc ||
-        (el as HTMLImageElement | HTMLVideoElement).src ||
-        el.getAttribute('src') ||
-        el.querySelector('source')?.getAttribute('src') ||
-        ''
-      ).trim();
-      if (!src || seenUrls.has(src)) return;
-      seenUrls.add(src);
+      const src = getElementMediaSourceUrl(el);
+      if (!src) return;
+      const norm = normalizeAssetUrl(src);
+      if (seenUrls.has(norm)) return;
+      seenUrls.add(norm);
 
       const idx = assets.length;
       const selectorId = `bs-flow-${taskType}-${taskId}-${idx}`;
@@ -1389,14 +1432,19 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
         }
       }
 
-      // 2. Click "1K Original size" in the dropdown menu
+      // 2. Click "Original size" in the dropdown menu
       if (originalSizeItem) {
-        await activateControlWithEvents(originalSizeItem);
-        await new Promise((r) => setTimeout(r, 200));
-        if (isElementVisible(originalSizeItem)) {
-          await this.dispatchCdpClickOnElement(originalSizeItem);
+        const clickable =
+          (originalSizeItem.closest('button[role="menuitem"], [role="menuitem"]') as HTMLElement) ||
+          originalSizeItem;
+        await activateControlWithEvents(clickable);
+        await new Promise((r) => setTimeout(r, 300));
+        if (isElementVisible(clickable)) {
+          await this.dispatchCdpClickOnElement(clickable);
+          await new Promise((r) => setTimeout(r, 300));
         }
-        await new Promise((r) => setTimeout(r, 350));
+        // Give Google Flow time to initiate the video download stream before navigating away
+        await new Promise((r) => setTimeout(r, 1200));
       }
 
       // 3. If we opened the Single-Image Detail View from the grid, click "Done" to return to the grid
@@ -1411,10 +1459,16 @@ export class GoogleFlowDomAdapter implements PlatformAdapter {
         );
         if (doneBtn) {
           await activateControlWithEvents(doneBtn);
-          await new Promise((r) => setTimeout(r, 150));
+          await new Promise((r) => setTimeout(r, 200));
           if (isElementVisible(doneBtn)) {
             await this.dispatchCdpClickOnElement(doneBtn);
           }
+          // Wait for the detail view overlay to close and grid to settle before returning
+          for (let i = 0; i < 15; i++) {
+            await new Promise((r) => setTimeout(r, 200));
+            if (!isElementVisible(doneBtn)) break;
+          }
+          await new Promise((r) => setTimeout(r, 400));
         }
       }
 

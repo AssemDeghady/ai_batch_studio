@@ -15,6 +15,7 @@ import {
 import {
   clearPendingNativeDownload,
   consumePendingDirectDownload,
+  consumePendingNativeDownload,
   getPendingNativeDownload,
   handleChromeDownloadChanged,
   retryTaskDownloadsOnly
@@ -674,24 +675,25 @@ export async function initializeBackgroundServiceWorker(): Promise<void> {
         return true;
       }
 
-      const pending = getPendingNativeDownload();
+      const pending = consumePendingNativeDownload();
       if (pending) {
-        clearPendingNativeDownload();
         getOutput(pending.outputId)
           .then((output) => {
             if (output) {
-              saveOutput({
+              return saveOutput({
                 ...output,
                 downloadId: item.id,
                 status: output.status === 'completed' ? 'completed' : 'in_progress'
               });
             }
           })
-          .catch(() => {});
-        suggest({
-          filename: pending.relativePath.replace(/\.jfif$/i, '.png'),
-          conflictAction: 'uniquify'
-        });
+          .catch(() => {})
+          .finally(() => {
+            suggest({
+              filename: pending.relativePath.replace(/\.jfif$/i, '.png'),
+              conflictAction: 'uniquify'
+            });
+          });
         return true;
       }
 

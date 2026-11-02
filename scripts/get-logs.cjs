@@ -43,6 +43,6 @@ const { chromium } = require('playwright-core');
       console.log(`[${new Date(l.timestamp).toLocaleTimeString()}] [${l.level.toUpperCase()}] [${l.scope}] ${l.message}`);
     });
   }
-  await browser.close();
+  // do not close browser
   process.exit(0);
 })();

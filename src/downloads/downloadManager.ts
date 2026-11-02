@@ -89,18 +89,38 @@ interface PendingDirectDownloadExpectation {
   expiresAt: number;
 }
 
-let pendingNativeDownload: PendingNativeDownloadExpectation | null = null;
+const pendingNativeDownloads: PendingNativeDownloadExpectation[] = [];
 const pendingDirectDownloads: PendingDirectDownloadExpectation[] = [];
 
-export function getPendingNativeDownload(): PendingNativeDownloadExpectation | null {
-  if (pendingNativeDownload && Date.now() > pendingNativeDownload.expiresAt) {
-    pendingNativeDownload = null;
+export function registerPendingNativeDownload(expectation: PendingNativeDownloadExpectation): void {
+  const now = Date.now();
+  for (let i = pendingNativeDownloads.length - 1; i >= 0; i--) {
+    if (pendingNativeDownloads[i].expiresAt < now) {
+      pendingNativeDownloads.splice(i, 1);
+    }
   }
-  return pendingNativeDownload;
+  pendingNativeDownloads.push(expectation);
+}
+
+export function consumePendingNativeDownload(): PendingNativeDownloadExpectation | null {
+  const now = Date.now();
+  while (pendingNativeDownloads.length > 0) {
+    const next = pendingNativeDownloads.shift()!;
+    if (next.expiresAt >= now) {
+      return next;
+    }
+  }
+  return null;
+}
+
+export function getPendingNativeDownload(): PendingNativeDownloadExpectation | null {
+  const now = Date.now();
+  const valid = pendingNativeDownloads.find((entry) => entry.expiresAt >= now);
+  return valid || null;
 }
 
 export function clearPendingNativeDownload(): void {
-  pendingNativeDownload = null;
+  pendingNativeDownloads.length = 0;
 }
 
 export function consumePendingDirectDownload(
@@ -456,13 +476,13 @@ async function executeSingleOutputDownloadAttempt(params: {
       hasNativeDownloadButton: true
     };
 
-    pendingNativeDownload = {
+    registerPendingNativeDownload({
       outputId: output.id,
       taskId: task.id,
       batchId: batch.id,
       relativePath,
-      expiresAt: Date.now() + 15000
-    };
+      expiresAt: Date.now() + 60000
+    });
 
     try {
       const adapterDl = await adapter.downloadResult(targetAsset, relativePath);

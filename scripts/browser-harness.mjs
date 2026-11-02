@@ -29,7 +29,7 @@ import { execSync } from 'child_process';
 const CDP_HOST = '127.0.0.1';
 const CDP_PORT = 9222;
 const CDP_URL = `http://${CDP_HOST}:${CDP_PORT}`;
-const TEST_PROFILE_DIR = 'C:\\Users\\assem\\.gemini\\antigravity\\chrome-test-profile';
+const TEST_PROFILE_DIR = 'C:\\Users\\assem\\ChromeDebug';
 const EXTENSION_DIST = path.resolve(process.cwd(), 'dist');
 
 /**

@@ -66,10 +66,17 @@ if ($runningProcs) {
 
 # 3. If Chrome is not running, launch it with remote debugging
 Write-Host "`nStarting Chrome with your existing normal profile and remote debugging enabled..." -ForegroundColor Cyan
-Start-Process -FilePath $chromeExe -ArgumentList @(
-  "--remote-debugging-port=9222",
-  "https://flow.google/"
-)
+$userDataDir = "$env:LOCALAPPDATA\Google\Chrome\User Data"
+$cmd = '"{0}" --remote-debugging-port=9222 --user-data-dir="{1}" "https://flow.google/"' -f $chromeExe, $userDataDir
+$res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd }
+if ($res.ReturnValue -ne 0) {
+  Write-Host "WMI launch failed (ReturnValue $($res.ReturnValue)). Falling back to Start-Process..." -ForegroundColor Yellow
+  Start-Process -FilePath $chromeExe -ArgumentList @(
+    "--remote-debugging-port=9222",
+    "--user-data-dir=$userDataDir",
+    "https://flow.google/"
+  )
+}
 
 Write-Host "Waiting for Chrome DevTools endpoint to bind on 127.0.0.1:9222..." -ForegroundColor Gray
 $deadline = (Get-Date).AddSeconds(15)

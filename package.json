@@ -1,6 +1,6 @@
 {
   "name": "ai-batch-studio",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "AI Batch Studio — Batch AI image and video generation Chrome extension for ChatGPT and Google Flow",
   "type": "module",

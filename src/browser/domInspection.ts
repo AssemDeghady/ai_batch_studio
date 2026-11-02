@@ -832,6 +832,57 @@ export function discoverSubmitControlCandidates(
 }
 
 /**
+ * Extracts the real media URL from a video, image, or container element (like <flow-video-tile>).
+ */
+export function getElementMediaSourceUrl(el: HTMLElement): string {
+  if (el.tagName.toLowerCase() === 'video') {
+    return (
+      (el as HTMLVideoElement).currentSrc ||
+      (el as HTMLVideoElement).src ||
+      el.getAttribute('src') ||
+      el.querySelector('source')?.getAttribute('src') ||
+      ''
+    ).trim();
+  }
+  if (el.tagName.toLowerCase() === 'img') {
+    return (
+      (el as HTMLImageElement).currentSrc ||
+      (el as HTMLImageElement).src ||
+      el.getAttribute('src') ||
+      ''
+    ).trim();
+  }
+  const innerVid = el.querySelector<HTMLVideoElement>('video');
+  if (innerVid) {
+    const vSrc =
+      innerVid.currentSrc ||
+      innerVid.src ||
+      innerVid.getAttribute('src') ||
+      innerVid.querySelector('source')?.getAttribute('src');
+    if (vSrc) return vSrc.trim();
+  }
+  const innerImg = el.querySelector<HTMLImageElement>('img');
+  if (innerImg) {
+    const iSrc = innerImg.currentSrc || innerImg.src || innerImg.getAttribute('src');
+    if (iSrc) return iSrc.trim();
+  }
+  const innerSource = el.querySelector<HTMLSourceElement>('source');
+  if (innerSource) {
+    const sSrc = innerSource.getAttribute('src');
+    if (sSrc) return sSrc.trim();
+  }
+  return (el.getAttribute('src') || '').trim();
+}
+
+/**
+ * Normalizes an asset URL by stripping query parameters and backend transformation suffixes (e.g. Google ASB =mm,18,15).
+ */
+export function normalizeAssetUrl(url: string): string {
+  if (!url) return '';
+  return url.trim().split(/[=?#]/)[0].toLowerCase();
+}
+
+/**
  * Strictly filters and returns genuine generated output elements (<img> or <video>) on the page,
  * excluding Google Account bar avatars (.boqOnegoogleliteOgbOneGoogleBar, /ogw/, /a/, =s32),
  * navigation icons, composer thumbnails, and hidden elements.
@@ -844,35 +895,36 @@ export function queryGeneratedOutputElements(
   const results: HTMLElement[] = [];
 
   const excludedContainerSelector =
-    '.boqOnegoogleliteOgbOneGoogleBar, #gb, mat-sidenav:not(.mat-sidenav-container), .mat-drawer:not(.mat-drawer-container), nav, header, aside, [role="navigation"], [role="menu"], [data-testid*="composer"], footer, .composer';
+    '.boqOnegoogleliteOgbOneGoogleBar, #gb, mat-sidenav:not(.mat-sidenav-container), .mat-drawer:not(.mat-drawer-container), nav, header, aside, [role="navigation"], [role="menu"], [data-testid*="composer"], footer, .composer, [role="dialog"], .flow-detail-view, .detail-view, .media-viewer, [aria-modal="true"]';
 
   if (!taskType || taskType === 'video') {
     const videoCandidates = Array.from(
       doc.querySelectorAll<HTMLElement>(
-        'video[src], [data-testid="flow-video-result"] video, .flow-output-card video, aisandbox-root video, main video, flow-video-tile img, flow-video-tile, [data-testid="flow-video-result"]'
+        'flow-video-tile, [data-testid="flow-video-result"], .flow-output-card, video[src], aisandbox-root video, main video'
       )
     ).filter((el) => {
       if (el.closest(excludedContainerSelector)) {
         return false;
       }
-      const vid = el as HTMLVideoElement;
-      const img = el as HTMLImageElement;
-      const src =
-        vid.currentSrc ||
-        vid.src ||
-        img.currentSrc ||
-        img.src ||
-        el.getAttribute('src') ||
-        el.querySelector('video')?.currentSrc ||
-        el.querySelector('video')?.src ||
-        el.querySelector('video source')?.getAttribute('src') ||
-        el.querySelector('img')?.currentSrc ||
-        el.querySelector('img')?.src ||
-        el.querySelector('source')?.getAttribute('src') ||
-        '';
+      const src = getElementMediaSourceUrl(el);
       return Boolean(src);
     });
-    results.push(...videoCandidates);
+
+    const seenTiles = new Set<Element>();
+    const deduplicatedVideoCandidates: HTMLElement[] = [];
+    for (const el of videoCandidates) {
+      const tile = el.closest('flow-video-tile, .flow-output-card, [data-testid="flow-video-result"]');
+      if (tile) {
+        if (!seenTiles.has(tile)) {
+          seenTiles.add(tile);
+          deduplicatedVideoCandidates.push(tile as HTMLElement);
+        }
+      } else {
+        deduplicatedVideoCandidates.push(el);
+      }
+    }
+
+    results.push(...deduplicatedVideoCandidates);
   }
 
   if (!taskType || taskType === 'image') {
